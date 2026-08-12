@@ -271,6 +271,96 @@ def test_play_failure_on_freshly_cached_phrase_falls_back(monkeypatch, tmp_path)
     assert len(events["store"]) == 1  # play был вызван с синтезированным файлом
 
 
+def test_play_failure_on_freshly_cached_phrase_keeps_the_file_on_disk(monkeypatch, tmp_path):
+    """Вторая половина прежней асимметрии (первая — тест выше, где кеш-ХИТ при
+    сбое play() удаляется): файл, только что записанный по кеш-пути (в кеше
+    его до этого звонка не было), при сбое play() ОСТАЁТСЯ на диске. За него
+    уже заплачено сетевым запросом, а случайный сбой звукового устройства
+    (не редкость на Windows с MCI) не делает mp3 битым — выбросить его
+    значило бы никогда не наполнить кеш коротких фраз при неисправном
+    устройстве."""
+    events = {"fallback": []}
+
+    def fake_post(url, headers, payload, timeout):
+        return FakeResponse(content=_MP3)
+
+    def fake_play_fails(path):
+        raise RuntimeError("play error")
+
+    monkeypatch.setattr(tts_fish, "post", fake_post)
+    say = tts_fish.make_fish_tts(
+        "ключ", "модель", events["fallback"].append, cache_dir=tmp_path, play=fake_play_fails
+    )
+
+    say("Готово")
+
+    assert events["fallback"] == ["Готово"]
+    cached_files = list(tmp_path.glob("*.mp3"))
+    assert len(cached_files) == 1                 # файл НЕ выброшен
+    assert cached_files[0].read_bytes() == _MP3    # и это валидный синтез, не огрызок
+
+
+def test_cache_file_unlink_failure_after_play_error_does_not_mask_it(monkeypatch, tmp_path):
+    """Удаление битого файла кеша при сбое play() обёрнуто в try/except OSError
+    (симметрично удалению временного файла тремя строками ниже в
+    _play_prepared): если сам unlink бросит — например PermissionError
+    (WinError 32), потому что файл ещё держит открытым MCI-плеер, — это не
+    должно замаскировать исходную ошибку проигрывания и вылететь наружу из
+    say() необработанным исключением."""
+    events = {"fallback": []}
+    cached_path = tts_fish._cache_path(tmp_path, "Готово", "модель")
+    cached_path.parent.mkdir(parents=True, exist_ok=True)
+    cached_path.write_bytes(b"broken-bytes")
+
+    def fake_post(url, headers, payload, timeout):
+        raise RuntimeError("нет сети")
+
+    def fake_play_fails(path):
+        raise RuntimeError("play error")
+
+    def boom_unlink(self, missing_ok=False):
+        raise PermissionError("[WinError 32] файл занят другим процессом")
+
+    monkeypatch.setattr(tts_fish, "post", fake_post)
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+    say = tts_fish.make_fish_tts(
+        "ключ", "модель", events["fallback"].append, cache_dir=tmp_path, play=fake_play_fails
+    )
+
+    say("Готово")  # не должно бросить исключение наружу
+
+    assert events["fallback"] == ["Готово"]
+
+
+def test_trim_failure_does_not_break_synthesis_or_playback(monkeypatch, tmp_path):
+    """trim() умеет бросать: sorted(...).stat() ловит FileNotFoundError, если
+    файл исчез между glob и stat (его мог доиграть и удалить другой поток),
+    а unlink на Windows — PermissionError (WinError 32) на файле, который
+    держит открытым MCI. Оба сценария создаёт ровно наш конвейер (один поток
+    играет из кеша, другой синтезирует и подчищает его). Такой сбой не
+    должен мешать ни синтезу, ни проигрыванию и не должен выходить наружу
+    из say()."""
+    events = {"played": [], "fallback": []}
+
+    def fake_post(url, headers, payload, timeout):
+        return FakeResponse(content=_MP3)
+
+    def boom_trim(cache_dir, limit=tts_cache.MAX_CACHE_FILES):
+        raise PermissionError("[WinError 32] файл занят другим процессом")
+
+    monkeypatch.setattr(tts_fish, "post", fake_post)
+    monkeypatch.setattr(tts_cache, "trim", boom_trim)
+    say = tts_fish.make_fish_tts(
+        "ключ", "модель", events["fallback"].append, cache_dir=tmp_path, play=events["played"].append
+    )
+
+    say("Готово")  # не должно бросить исключение наружу
+
+    assert len(events["played"]) == 1
+    assert events["fallback"] == []
+    assert len(list(tmp_path.glob("*.mp3"))) == 1
+
+
 def test_play_failure_on_long_uncached_text_falls_back_and_removes_temp_file(monkeypatch, tmp_path):
     """Ветка «текст длиннее 40 символов» (не кешируется): play() падает —
     fallback вызван, а временный файл не должен остаться на диске навсегда."""

@@ -83,10 +83,16 @@ class Prepared:
     path=None — синтез не удался, и решать, что делать (запасной голос),
     будет зовущий: у конвейера и у обычного say разные правильные ответы.
     temporary=True — файл временный, удалить после проигрывания.
+    from_cache=True — файл уже лежал на диске (попадание в кеш), а не только
+    что записан. Поле нужно, чтобы _play_prepared и say() отличали кеш-хит от
+    свежей записи по тому же кеш-пути: сбой проигрывания кеш-хита означает
+    «файл битый, можно удалить и пересинтезировать», а сбой проигрывания
+    только что оплаченного сетевым запросом файла — нет (см. _play_prepared).
     """
 
     path: str | None
     temporary: bool = False
+    from_cache: bool = False
 
 
 def make_cached_prepare(synthesize, *, provider: str, voice_key: str, cache_dir):
@@ -103,7 +109,7 @@ def make_cached_prepare(synthesize, *, provider: str, voice_key: str, cache_dir)
             return Prepared(None)
         cached = cache_path(cache_dir, text, voice_key) if len(text) <= MAX_CACHED_CHARS else None
         if cached is not None and cached.exists():
-            return Prepared(str(cached), temporary=False)
+            return Prepared(str(cached), temporary=False, from_cache=True)
 
         if in_cooldown(provider):
             return Prepared(None)
@@ -131,8 +137,19 @@ def make_cached_prepare(synthesize, *, provider: str, voice_key: str, cache_dir)
             warn_once(f"{provider}-store", f"Не смог сохранить синтез ({error})")
             return Prepared(None)
         if cached is not None:
-            trim(cache_dir)
-        return Prepared(str(path), temporary=cached is None)
+            # Уборка кеша — best-effort и не должна портить только что удавшийся
+            # синтез: sorted(...).stat() ловит FileNotFoundError, если файл исчез
+            # между glob и stat (его как раз мог доиграть и удалить другой поток),
+            # а unlink на Windows — PermissionError (WinError 32) на файле,
+            # который держит открытым MCI-плеер. Оба сценария создаёт ровно наш
+            # конвейер (один поток играет из кеша, другой синтезирует и подчищает
+            # его), поэтому исключение здесь гасим и продолжаем: фраза только что
+            # честно синтезирована и обязана прозвучать, даже если старьё не убралось.
+            try:
+                trim(cache_dir)
+            except Exception as error:
+                warn_once(f"{provider}-trim", f"Не смог убрать старые файлы кеша ({error})")
+        return Prepared(str(path), temporary=cached is None, from_cache=False)
 
     return prepare
 
@@ -144,10 +161,15 @@ def _play_prepared(prepared: Prepared, *, play) -> Exception | None:
     единственный пересинтез после сбоя кеш-файла), чтобы не дублировать
     play/удаление/уборку целиком под копирку.
 
-    При неудаче кеш-файл (temporary=False) удаляется здесь же: иначе, если
-    и пересинтез следом не удастся (например, нет сети), битый файл остался
-    бы под тем же именем и проигрывался бы (безуспешно) вечно. Временный
-    файл удаляется в любом случае — и при успехе, и при неудаче, как раньше.
+    При неудаче удаляется только файл из КЕШ-ХИТА (from_cache=True): он уже
+    был битым до нас, и если пересинтез следом тоже не удастся (например, нет
+    сети), огрызок не должен остаться под тем же именем и проигрываться
+    (безуспешно) вечно. Файл, только что записанный по кеш-пути свежим
+    синтезом (from_cache=False, temporary=False), НЕ удаляется: за него уже
+    заплачено сетевым запросом, а случайный сбой звукового устройства не
+    делает mp3 битым — выбросить его значило бы никогда не наполнить кеш
+    коротких фраз при неисправном устройстве. Временный файл (temporary=True)
+    удаляется в любом случае — и при успехе, и при неудаче, как раньше.
 
     Варнинг в лог и решение "пересинтезировать или сразу fallback" — уже на
     совести say(): у двух случаев (кеш-хит vs всё остальное) разный текст
@@ -157,8 +179,11 @@ def _play_prepared(prepared: Prepared, *, play) -> Exception | None:
         play(prepared.path)
         return None
     except Exception as error:
-        if not prepared.temporary:
-            Path(prepared.path).unlink(missing_ok=True)
+        if prepared.from_cache:
+            try:
+                Path(prepared.path).unlink(missing_ok=True)
+            except OSError:
+                pass
         return error
     finally:
         if prepared.temporary:
@@ -186,14 +211,6 @@ def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cach
         if not text:
             return
 
-        # Кеш-хит определяем ДО prepare(): если файл уже лежал на диске,
-        # сбой его проигрывания — повод пересинтезировать фразу заново
-        # (человек услышит её тем же голосом), а не сразу уходить на
-        # запасной. Для свежего файла (кеш-мисс или temporary) такой
-        # разницы нет — пересинтез только что уже случился.
-        cached = cache_path(cache_dir, text, voice_key) if len(text) <= MAX_CACHED_CHARS else None
-        was_cache_hit = cached is not None and cached.exists()
-
         prepared = prepare(text)
         if prepared.path is None:
             fallback(text)
@@ -203,7 +220,7 @@ def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cach
         if error is None:
             return
 
-        if was_cache_hit:
+        if prepared.from_cache:
             # Файл из кеша не проигрался. Раньше человек в этот момент слышал
             # фразу СВОИМ голосом: битый файл уже удалён (см. _play_prepared),
             # и фраза синтезируется заново — ровно один раз (без цикла), после
