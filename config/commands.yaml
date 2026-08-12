@@ -1,0 +1,897 @@
+# Whisper иногда пишет названия латиницей (ютуб -> youtube, твич -> twitch),
+# поэтому у популярных команд есть дубли-синонимы.
+"открой канал * на твиче":
+  action: open_channel
+  template: "twitch|{0}"
+"открой канал * на twitch":
+  action: open_channel
+  template: "twitch|{0}"
+"включи стрим * на твиче":
+  action: open_channel
+  template: "twitch|{0}"
+"включи стрим * на twitch":
+  action: open_channel
+  template: "twitch|{0}"
+"найди на ютубе *":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"найди на youtube *":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"открой ютуб":
+  action: browser_open
+  template: "youtube.com"
+"открой youtube":
+  action: browser_open
+  template: "youtube.com"
+"открой твич":
+  action: browser_open
+  template: "twitch.tv"
+"открой twitch":
+  action: browser_open
+  template: "twitch.tv"
+
+# --- Сайты ---
+"открой спотифай":
+  action: browser_open
+  template: "open.spotify.com"
+"открой spotify":
+  action: browser_open
+  template: "open.spotify.com"
+"открой тикток":
+  action: browser_open
+  template: "tiktok.com"
+"открой tiktok":
+  action: browser_open
+  template: "tiktok.com"
+"открой почту":
+  action: browser_open
+  template: "mail.google.com"
+
+# --- Поиск ---
+"загугли *":
+  action: browser_open
+  template: "google.com/search?q={0}"
+"гугли *":
+  action: browser_open
+  template: "google.com/search?q={0}"
+"за гугли *":
+  action: browser_open
+  template: "google.com/search?q={0}"
+"найди в гугле *":
+  action: browser_open
+  template: "google.com/search?q={0}"
+"найди на твиче *":
+  action: browser_open
+  template: "twitch.tv/search?term={0}"
+"найди на twitch *":
+  action: browser_open
+  template: "twitch.tv/search?term={0}"
+"включи * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+
+# --- Программы ---
+"запусти *":
+  action: launch_app
+  template: "{0}"
+
+# --- Показать окно Джони поверх окон ---
+"открой браузер":
+  action: browser_focus
+  template: "-"
+"открой хром":
+  action: browser_focus
+  template: "-"
+"покажи браузер":
+  action: browser_focus
+  template: "-"
+
+# --- Смена аккаунта Steam ---
+# Много вариантов, т.к. Whisper пишет имена по-разному (смурф/Smurf/сморф).
+"зайди на основу":
+  action: steam_login
+  template: "art_vol_teror"
+"зайди на основной":
+  action: steam_login
+  template: "art_vol_teror"
+"войди в основной":
+  action: steam_login
+  template: "art_vol_teror"
+"основа":
+  action: steam_login
+  template: "art_vol_teror"
+"основной":
+  action: steam_login
+  template: "art_vol_teror"
+"зайди на йети":
+  action: steam_login
+  template: "uhctuhkt1"
+"зайди на yeti":
+  action: steam_login
+  template: "uhctuhkt1"
+"войди в йети":
+  action: steam_login
+  template: "uhctuhkt1"
+"йети":
+  action: steam_login
+  template: "uhctuhkt1"
+"yeti":
+  action: steam_login
+  template: "uhctuhkt1"
+"зайди на смурф":
+  action: steam_login
+  template: "flynes_"
+"зайди на smurf":
+  action: steam_login
+  template: "flynes_"
+"зайди на сморф":
+  action: steam_login
+  template: "flynes_"
+"войди в смурф":
+  action: steam_login
+  template: "flynes_"
+"смурф":
+  action: steam_login
+  template: "flynes_"
+"smurf":
+  action: steam_login
+  template: "flynes_"
+"сморф":
+  action: steam_login
+  template: "flynes_"
+
+# --- Мониторы: перенести активное окно ---
+# первый/левый/основной = 1, второй/правый = 2; «монитор» = «экран»
+"на первый экран":
+  action: move_window
+  template: "1"
+"на левый экран":
+  action: move_window
+  template: "1"
+"перемести на первый монитор":
+  action: move_window
+  template: "1"
+"перемести на первый экран":
+  action: move_window
+  template: "1"
+"перемести на левый монитор":
+  action: move_window
+  template: "1"
+"на второй экран":
+  action: move_window
+  template: "2"
+"на правый экран":
+  action: move_window
+  template: "2"
+"перемести на второй монитор":
+  action: move_window
+  template: "2"
+"перемести на второй экран":
+  action: move_window
+  template: "2"
+"перемести на правый монитор":
+  action: move_window
+  template: "2"
+"на первый монитор":
+  action: move_window
+  template: "1"
+"на левый монитор":
+  action: move_window
+  template: "1"
+"на основной монитор":
+  action: move_window
+  template: "1"
+"на главный монитор":
+  action: move_window
+  template: "1"
+"перенеси на первый монитор":
+  action: move_window
+  template: "1"
+"перенеси на левый монитор":
+  action: move_window
+  template: "1"
+"перенеси на основной монитор":
+  action: move_window
+  template: "1"
+"перенеси на главный монитор":
+  action: move_window
+  template: "1"
+"скинь на первый монитор":
+  action: move_window
+  template: "1"
+"скинь на левый монитор":
+  action: move_window
+  template: "1"
+"на второй монитор":
+  action: move_window
+  template: "2"
+"на правый монитор":
+  action: move_window
+  template: "2"
+"перенеси на второй монитор":
+  action: move_window
+  template: "2"
+"перенеси на правый монитор":
+  action: move_window
+  template: "2"
+"скинь на второй монитор":
+  action: move_window
+  template: "2"
+"скинь на правый монитор":
+  action: move_window
+  template: "2"
+
+# --- Мониторы: запустить программу на мониторе ---
+"открой * на первом мониторе":
+  action: launch_on_monitor
+  template: "{0}|1"
+"открой * на левом мониторе":
+  action: launch_on_monitor
+  template: "{0}|1"
+"открой * на втором мониторе":
+  action: launch_on_monitor
+  template: "{0}|2"
+"открой * на правом мониторе":
+  action: launch_on_monitor
+  template: "{0}|2"
+"сделай громче":
+  action: system
+  template: "volume_up"
+"сделай тише":
+  action: system
+  template: "volume_down"
+"громче":
+  action: system
+  template: "volume_up"
+"тише":
+  action: system
+  template: "volume_down"
+"выключи звук":
+  action: system
+  template: "mute"
+
+# --- Громкость: относительные (идут ПЕРЕД общими «громкость *») ---
+"сделай тише на *":
+  action: volume_delta
+  template: "-{0}"
+"сделай громче на *":
+  action: volume_delta
+  template: "+{0}"
+"тише на *":
+  action: volume_delta
+  template: "-{0}"
+"громче на *":
+  action: volume_delta
+  template: "+{0}"
+"громкость на * ниже":
+  action: volume_delta
+  template: "-{0}"
+"громкость на * выше":
+  action: volume_delta
+  template: "+{0}"
+# --- Громкость: установить значение ---
+"громкость на *":
+  action: set_volume
+  template: "{0}"
+"громкость *":
+  action: set_volume
+  template: "{0}"
+"поставь громкость *":
+  action: set_volume
+  template: "{0}"
+"сделай громкость *":
+  action: set_volume
+  template: "{0}"
+"заблокируй компьютер":
+  action: system
+  template: "lock"
+
+# --- Системные: скриншот, окна, питание ---
+"сделай скриншот":
+  action: system
+  template: "screenshot"
+"скриншот":
+  action: system
+  template: "screenshot"
+"сними скриншот":
+  action: system
+  template: "screenshot"
+"сверни всё":
+  action: system
+  template: "minimize_all"
+"сверни все окна":
+  action: system
+  template: "minimize_all"
+"покажи рабочий стол":
+  action: system
+  template: "show_desktop"
+"усыпи компьютер":
+  action: system
+  template: "sleep"
+"спящий режим":
+  action: system
+  template: "sleep"
+"выключи компьютер":
+  action: system
+  template: "shutdown"
+"перезагрузи компьютер":
+  action: system
+  template: "restart"
+"отмени выключение":
+  action: system
+  template: "cancel_shutdown"
+"отмени перезагрузку":
+  action: system
+  template: "cancel_shutdown"
+
+# --- Медиа (Spotify / YouTube через системные медиа-клавиши) ---
+"пауза":
+  action: system
+  template: "play_pause"
+"поставь на паузу":
+  action: system
+  template: "play_pause"
+"останови музыку":
+  action: system
+  template: "play_pause"
+"останови":
+  action: system
+  template: "play_pause"
+"останови-ка":
+  action: system
+  template: "play_pause"
+"останови ка":
+  action: system
+  template: "play_pause"
+"запаузь":
+  action: system
+  template: "play_pause"
+"запаузи":
+  action: system
+  template: "play_pause"
+"продолжи":
+  action: system
+  template: "play_pause"
+"продолжим":
+  action: system
+  template: "play_pause"
+"продолжи музыку":
+  action: system
+  template: "play_pause"
+"продолжай":
+  action: system
+  template: "play_pause"
+"сними паузу":
+  action: system
+  template: "play_pause"
+"сними с паузы":
+  action: system
+  template: "play_pause"
+"убери паузу":
+  action: system
+  template: "play_pause"
+"включи музыку":
+  action: system
+  template: "play_pause"
+"следующий трек":
+  action: system
+  template: "next_track"
+"следующая песня":
+  action: system
+  template: "next_track"
+"переключи трек":
+  action: system
+  template: "next_track"
+"переключи песню":
+  action: system
+  template: "next_track"
+"предыдущий трек":
+  action: system
+  template: "prev_track"
+"предыдущая песня":
+  action: system
+  template: "prev_track"
+"прошлый трек":
+  action: system
+  template: "prev_track"
+"верни трек":
+  action: system
+  template: "prev_track"
+
+# --- Больше фраз для поиска на YouTube (порядок «X на ютубе») ---
+# Whisper часто слышит «найди» как «зайди» или «и» — добавлены варианты.
+"найди * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"зайди * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"и * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"найди * на youtube":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"введи в поиск * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"поищи * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+"найди видео * на ютубе":
+  action: browser_open
+  template: "youtube.com/results?search_query={0}"
+
+# --- Комбо: поиск на YouTube сразу на нужном мониторе (новое окно Chrome) ---
+"включи * на ютубе на втором мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|2"
+"включи * на ютубе на первом мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|1"
+"найди * на ютубе на втором мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|2"
+"зайди * на ютубе на втором мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|2"
+"и * на ютубе на втором мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|2"
+"найди * на ютубе на первом мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|1"
+"зайди * на ютубе на первом мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|1"
+"и * на ютубе на первом мониторе":
+  action: open_url_on_monitor
+  template: "youtube.com/results?search_query={0}|1"
+
+# --- Управление страницей в окне Джони (YouTube) ---
+"включи первое видео":
+  action: browser_click_result
+  template: "1"
+"включи второе видео":
+  action: browser_click_result
+  template: "2"
+"включи третье видео":
+  action: browser_click_result
+  template: "3"
+"включи первый результат":
+  action: browser_click_result
+  template: "1"
+"включи второй результат":
+  action: browser_click_result
+  template: "2"
+# Алиасы с «открой» нужны отдельными строками: без них фраза «открой первое
+# видео» проваливается в жадный "открой *" (app_focus) в конце файла и
+# Джони пытается запустить несуществующую программу «первое видео» — живой
+# баг 2026-08-04 (история: "открой первое видео" -> "точно"/app_focus).
+"открой первое видео":
+  action: browser_click_result
+  template: "1"
+"открой второе видео":
+  action: browser_click_result
+  template: "2"
+"открой третье видео":
+  action: browser_click_result
+  template: "3"
+"открой первый результат":
+  action: browser_click_result
+  template: "1"
+"открой второй результат":
+  action: browser_click_result
+  template: "2"
+"перемотай на *":
+  action: browser_seek
+  template: "{0}"
+"перемотай видео на *":
+  action: browser_seek
+  template: "{0}"
+"перемотай вперёд на *":
+  action: browser_seek
+  template: "вперёд {0}"
+"перемотай вперед на *":
+  action: browser_seek
+  template: "вперёд {0}"
+"перемотай назад на *":
+  action: browser_seek
+  template: "назад {0}"
+"перемотай вперёд *":
+  action: browser_seek
+  template: "вперёд {0}"
+"перемотай вперед *":
+  action: browser_seek
+  template: "вперёд {0}"
+"перемотай назад *":
+  action: browser_seek
+  template: "назад {0}"
+"мотай на *":
+  action: browser_seek
+  template: "{0}"
+"мотай вперёд на *":
+  action: browser_seek
+  template: "вперёд {0}"
+"мотай вперед на *":
+  action: browser_seek
+  template: "вперёд {0}"
+"мотай назад на *":
+  action: browser_seek
+  template: "назад {0}"
+"мотай вперёд *":
+  action: browser_seek
+  template: "вперёд {0}"
+"мотай вперед *":
+  action: browser_seek
+  template: "вперёд {0}"
+"мотай назад *":
+  action: browser_seek
+  template: "назад {0}"
+"следующее видео":
+  action: browser_next
+  template: "-"
+"разверни на весь экран":
+  action: browser_fullscreen
+  template: "-"
+"на весь экран":
+  action: browser_fullscreen
+  template: "-"
+"полный экран":
+  action: browser_fullscreen
+  template: "-"
+# Внутри цепочки работает только ТОЧНОЕ совпадение, поэтому вариантам
+# с предлогом нужны свои строки: на нечёткое там рассчитывать нельзя.
+"на полный экран":
+  action: browser_fullscreen
+  template: "-"
+"в полном экране":
+  action: browser_fullscreen
+  template: "-"
+"открой на полный экран":
+  action: browser_fullscreen
+  template: "-"
+"открой на весь экран":
+  action: browser_fullscreen
+  template: "-"
+"разверни на полный экран":
+  action: browser_fullscreen
+  template: "-"
+
+# --- Discord: сообщения ---
+# Порядок важен: «напиши сообщение *» обязано стоять ПЕРЕД «напиши *»,
+# иначе жадный шаблон заберёт фразу себе и слово «сообщение» уедет в имя.
+"напиши сообщение *":
+  action: discord_message
+  template: "{0}"
+"отправь сообщение *":
+  action: discord_message
+  template: "{0}"
+"напиши *":
+  action: discord_message
+  template: "{0}"
+"отправь *":
+  action: discord_message
+  template: "{0}"
+
+# --- Discord: звонки ---
+# Только точное совпадение (см. is_unsafe_action): звонок живому человеку
+# угадывать нельзя, поэтому вариантов фразы больше, чем обычно.
+"позвони *":
+  action: discord_call
+  template: "{0}"
+"позвони ка *":
+  action: discord_call
+  template: "{0}"
+"набери *":
+  action: discord_call
+  template: "{0}"
+"свяжись с *":
+  action: discord_call
+  template: "{0}"
+
+# --- Вывести уже запущенную программу поверх остальных окон ---
+# --- Ввод текста в текущее сфокусированное поле (не окно Джони) ---
+# Отдельно от Enter намеренно: распознавание иногда обрезает хвост фразы,
+# объединять «ввод+Enter» в одну команду решили не рисковать (см. память).
+"ввод *":
+  action: type_text
+  template: "{0}"
+"вводи *":
+  action: type_text
+  template: "{0}"
+"введи *":
+  action: type_text
+  template: "{0}"
+"напечатай *":
+  action: type_text
+  template: "{0}"
+"энтер":
+  action: press_enter
+  template: "-"
+"нажми энтер":
+  action: press_enter
+  template: "-"
+
+# --- Память ---
+# «Запомни, что на экране» — распознать и положить в ДОЛГУЮ память, отдельной
+# командой. Само по себе туда не пишется ничего: факты живут до «забудь» и
+# уезжают в промпт каждой модели, а на экране бывает чужая переписка.
+# Стоит ПЕРЕД «запомни *», и это не вкусовщина: звёздочка перехватила бы фразу
+# первой и запомнила буквально «что на экране» вместо того, что там написано.
+"запомни что на экране":
+  action: remember_capture
+  template: "screen"
+"запомни текст с экрана":
+  action: remember_capture
+  template: "screen"
+"запомни что в окне":
+  action: remember_capture
+  template: "window"
+"запомни *":
+  action: remember
+  template: "{0}"
+"забудь *":
+  action: forget
+  template: "{0}"
+"что ты помнишь":
+  action: list_memory
+  template: "-"
+"что ты помнишь обо мне":
+  action: list_memory
+  template: "-"
+"поправь *":
+  action: update_fact
+  template: "{0}"
+"исправь *":
+  action: update_fact
+  template: "{0}"
+
+# Внешние тулзы (johnny/connectors). Без ключей и без согласия в settings.yaml
+# отвечают отказом с причиной, а не молчанием — команда есть всегда, иначе
+# «Джони меня не понял» и «Джони не настроен» звучали бы одинаково.
+#
+# «Откуда эта картинка» здесь больше нет намеренно: обратный поиск по индексу
+# интернета выполнять нечем (см. johnny/connectors/azure_vision.py). Оставить
+# фразу значило бы обещать то, чего не будет — Azure отвечает на другой вопрос,
+# «что на картинке изображено», и он ниже.
+#
+# «Прочитай текст» стоит ПЕРЕД «что на картинке»: обе фразы про картинку, но
+# features у них разные, и порядок правил здесь и решает, какая сработает.
+#
+# Свои снимки (экран/окно/камера) стоят ПЕРЕД всеми звёздочными правилами, и это
+# не косметика: «прочитай текст с экрана» иначе совпало бы с «прочитай текст *»,
+# и Джони пошёл бы искать файл с именем «с экрана». Источник передаётся
+# аргументом (screen/window/camera) — новая фраза стоит одной строки, не кода.
+#
+# Это НЕ «сделай скриншот» выше: тот кладёт картинку человеку в Pictures
+# насовсем, а здесь снимок временный и удаляется сразу после ответа —
+# на экране может быть чужая переписка.
+"прочитай что на экране":
+  action: read_capture
+  template: "screen"
+"прочитай с экрана":
+  action: read_capture
+  template: "screen"
+"прочитай текст с экрана":
+  action: read_capture
+  template: "screen"
+"что написано на экране":
+  action: read_capture
+  template: "screen"
+"прочитай что в окне":
+  action: read_capture
+  template: "window"
+"прочитай текст из окна":
+  action: read_capture
+  template: "window"
+"прочитай что перед камерой":
+  action: read_capture
+  template: "camera"
+# Выделение области мышью: экран снимается ДО показа рамки, иначе плёнка
+# оверлея попала бы в кадр (см. johnny/capture.py).
+"прочитай выделенное":
+  action: read_capture
+  template: "region"
+"прочитай текст из области":
+  action: read_capture
+  template: "region"
+"что на экране":
+  action: describe_capture
+  template: "screen"
+"что сейчас на экране":
+  action: describe_capture
+  template: "screen"
+"опиши экран":
+  action: describe_capture
+  template: "screen"
+"что в окне":
+  action: describe_capture
+  template: "window"
+"опиши окно":
+  action: describe_capture
+  template: "window"
+"что видит камера":
+  action: describe_capture
+  template: "camera"
+"что перед камерой":
+  action: describe_capture
+  template: "camera"
+"посмотри в камеру":
+  action: describe_capture
+  template: "camera"
+"что вот здесь":
+  action: describe_capture
+  template: "region"
+"опиши выделенное":
+  action: describe_capture
+  template: "region"
+"прочитай текст с картинки *":
+  action: read_image_text
+  template: "{0}"
+"прочитай текст *":
+  action: read_image_text
+  template: "{0}"
+"распознай текст *":
+  action: read_image_text
+  template: "{0}"
+"что на картинке *":
+  action: describe_image
+  template: "{0}"
+"что на фото *":
+  action: describe_image
+  template: "{0}"
+"опиши картинку *":
+  action: describe_image
+  template: "{0}"
+# Лица. «Найди это лицо» тоже убрано: поиска человека по интернету Face++ не
+# делает, и подменять его сравнением втихую нельзя — это разные ответы.
+"сравни лица *":
+  action: compare_faces
+  template: "{0}"
+"это один человек *":
+  action: compare_faces
+  template: "{0}"
+"что за лицо *":
+  action: analyze_face
+  template: "{0}"
+"сколько лиц *":
+  action: analyze_face
+  template: "{0}"
+# Локальный архив лиц. Слово «архив» обязано звучать в каждой фразе: коннектор
+# ищет ТОЛЬКО среди снимков, которые человек сам сложил в индекс, и по
+# интернету не ходит. Фразы «найди это лицо» здесь нет и быть не должно — она
+# обещает поиск по сети, которого у нас нет ни одним коннектором.
+"есть ли в архиве *":
+  action: search_face_archive
+  template: "{0}"
+"найди в архиве *":
+  action: search_face_archive
+  template: "{0}"
+"поищи в архиве лиц *":
+  action: search_face_archive
+  template: "{0}"
+"найди профили *":
+  action: find_profiles
+  template: "{0}"
+"найди аккаунты *":
+  action: find_profiles
+  template: "{0}"
+
+# Перевод. Язык разбирает сам обработчик из хвоста фразы («на английский»),
+# поэтому здесь одно правило на все языки, а не по правилу на каждый: полтора
+# десятка почти одинаковых строк перекрыли бы общее «переведи *» по порядку.
+# «переведи фразу *» — ПЕРЕД «переведи *» по той же причине, что и «напиши
+# сообщение *» выше: иначе жадный шаблон заберёт фразу и слово «фразу» уедет
+# в переводимый текст.
+"переведи фразу *":
+  action: translate
+  template: "{0}"
+"переведи *":
+  action: translate
+  template: "{0}"
+"как будет *":
+  action: translate
+  template: "{0}"
+"как сказать *":
+  action: translate
+  template: "{0}"
+
+# --- Git ---
+# Работают, только когда в settings.yaml задан git_workdir: без него Джони
+# отвечает «не задана рабочая папка» и git НЕ запускает — иначе он рассказывал
+# бы про репозиторий в папке, из которой стартовал, а человек бы не заметил
+# подмены. Границы («сам ничего не индексирую», «push нет») — в johnny/git_tools.py.
+#
+# «гит» Whisper пишет и латиницей, и через «д» — отсюда дубли.
+"что с гитом":
+  action: git_status
+  template: ""
+"что с гитлом":
+  action: git_status
+  template: ""
+"статус гита":
+  action: git_status
+  template: ""
+"гит статус":
+  action: git_status
+  template: ""
+"git статус":
+  action: git_status
+  template: ""
+
+"какая ветка":
+  action: git_branch
+  template: ""
+"на какой я ветке":
+  action: git_branch
+  template: ""
+"на какой ветке":
+  action: git_branch
+  template: ""
+
+"какие есть ветки":
+  action: git_branches
+  template: ""
+"покажи ветки":
+  action: git_branches
+  template: ""
+"список веток":
+  action: git_branches
+  template: ""
+
+"что изменилось":
+  action: git_changes
+  template: ""
+"что я изменил":
+  action: git_changes
+  template: ""
+"что поменялось":
+  action: git_changes
+  template: ""
+
+"последние коммиты":
+  action: git_log
+  template: ""
+"покажи коммиты":
+  action: git_log
+  template: ""
+"последний коммит":
+  action: git_log
+  template: ""
+
+# «создай ветку *» — ПЕРЕД «закоммить *» и вообще перед всем, где есть
+# звёздочка: конкретнее, значит раньше (та же причина, что у «переведи фразу *»).
+"создай ветку *":
+  action: git_new_branch
+  template: "{0}"
+"новая ветка *":
+  action: git_new_branch
+  template: "{0}"
+
+# «закоммить с сообщением *» — СТРОГО ПЕРЕД «закоммить *»: жадный шаблон
+# иначе заберёт фразу себе, и слова «с сообщением» уедут в текст коммита.
+"закоммить с сообщением *":
+  action: git_commit
+  template: "{0}"
+"закоммить *":
+  action: git_commit
+  template: "{0}"
+"сделай коммит *":
+  action: git_commit
+  template: "{0}"
+
+# ВАЖНО: стоят В САМОМ КОНЦЕ файла намеренно. "открой *"/"фокус *" — это
+# ловящий всё шаблон (одна звёздочка без хвоста), а route_exact берёт первое
+# совпадение по порядку списка. Конкретные "открой ютуб"/"открой браузер" и
+# т.п. выше по файлу успевают сработать первыми и не перекрываются. По той же
+# причине имя сценария в scenarios.yaml не должно начинаться с "открой "/
+# "фокус " — такой сценарий никогда не дойдёт до своего правила, шаблон
+# заберёт фразу себе первым (см. предупреждение в scenarios.yaml).
+"фокус *":
+  action: app_focus
+  template: "{0}"
+"открой *":
+  action: app_focus
+  template: "{0}"

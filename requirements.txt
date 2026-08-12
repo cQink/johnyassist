@@ -1,0 +1,31 @@
+# Проверено на Python 3.14 (Windows). Версии — нижние границы того, что реально встало.
+pyyaml>=6.0
+requests>=2.32         # HTTP к fish.audio (голос) и Groq (быстрые ответы)
+faster-whisper>=1.2.1
+sounddevice>=0.5.5
+numpy>=2.0
+vosk>=0.3.45
+pyttsx3>=2.99
+edge-tts>=7.2.8         # живой нейро-голос (облако MS, бесплатно); pyttsx3 — офлайн-запас
+pycaw>=20251023
+comtypes>=1.4.16
+pywin32>=312
+pystray>=0.19.5
+Pillow>=12.0
+uiautomation==2.0.29
+pytest>=8.0
+
+# Необязательные: без них соответствующая команда отвечает «поставь то-то»,
+# а Джони работает как обычно (см. docs/connectors.md).
+# argostranslate>=1.9      # офлайн-перевод («переведи ... на английский»)
+# social-analyzer>=0.45    # профили по нику («найди профили ...»)
+# anthropic>=0.121         # «доп мозг» claude-opus-5 (strong_brain: opus).
+#                          # Слоту gpt (gpt-5.6-sol) своего пакета не нужно —
+#                          # он ходит обычным POST через http_client.
+
+# CUDA runtime для GPU-инференса Whisper (нужны при whisper_device: cuda).
+# Если используешь whisper_device: cpu — эти четыре можно не ставить (~1.2 ГБ).
+nvidia-cublas-cu12>=12.9
+nvidia-cudnn-cu12>=9.0
+nvidia-cuda-runtime-cu12>=12.9
+nvidia-cuda-nvrtc-cu12>=12.9

@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+models/
+*.ppn
+settings.local.yaml
+wake_result.txt
+route_check.txt
+johnny.log
+history.log
+memory.yaml
+memory.yaml.broken-*
+dialog.yaml
+chrome-profile/
+services/tts-server/.venv/
+
+# Секреты (ключи API) — НИКОГДА не коммитим
+config/secrets.yaml
+# Индекс лиц — это биометрия: векторы чужих лиц, пригодные для опознания.
+# Он и так внутри models/, но правило дублируется сознательно: если models/
+# когда-нибудь сузят до конкретных подпапок, архив лиц не должен уехать
+# в репозиторий вместе с этой правкой.
+models/face-index/
+.venv-xtts/
+
+# Кеш pytest — служебный, в истории не нужен
+.pytest_cache/

@@ -1,0 +1,16 @@
+# Любимые каналы: ключ = реальный слаг на Twitch/YouTube (то, что в URL),
+# aliases — как ты называешь его голосом. Падежи учитывать НЕ нужно:
+# «импульс» и «импульса», «серёга» и «серёги» распознаются одинаково.
+9impulse:
+  twitch: 9impulse
+  aliases: [импульс, кирчик, "9 импульс", "9 impulse"]
+serega_pirat:
+  twitch: serega_pirat
+  aliases: [серёга, "серёга пират", пират]
+# Алиасы попадают в словарь Whisper — он путал «Exile» с «Excel».
+exile_show:
+  youtube: "@ExileShow"
+  aliases: ["exile show", exile, "эксайл шоу", эксайл]
+exile_live:
+  youtube: "@ExileLive"
+  aliases: ["exile live", "эксайл лайв"]

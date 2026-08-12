@@ -1,0 +1,29 @@
+# Программы для «запусти *». У каждой несколько имён (латиница+кириллица),
+# т.к. Whisper часто пишет названия латиницей.
+# Пути к exe — в кавычках (из-за пробелов); запускаются из своей папки.
+
+# --- Steam-игры (по appid, без путей) ---
+дота: "steam://rungameid/570"
+dota: "steam://rungameid/570"
+апекс: "steam://rungameid/1172470"
+apex: "steam://rungameid/1172470"
+кс: "steam://rungameid/730"
+кс2: "steam://rungameid/730"
+cs: "steam://rungameid/730"
+раст: "steam://rungameid/252490"
+rust: "steam://rungameid/252490"
+
+# --- Программы ---
+стим: '"C:/Program Files (x86)/Steam/steam.exe"'
+steam: '"C:/Program Files (x86)/Steam/steam.exe"'
+# --new-window: всегда новое окно (даже если Chrome уже запущен) — чтобы
+# «открой браузер на втором мониторе» находил окно и переносил его.
+хром: '"C:/Program Files/Google/Chrome/Application/chrome.exe" --new-window'
+браузер: '"C:/Program Files/Google/Chrome/Application/chrome.exe" --new-window'
+chrome: '"C:/Program Files/Google/Chrome/Application/chrome.exe" --new-window'
+обс: '"C:/Program Files/obs-studio/bin/64bit/obs64.exe"'
+obs: '"C:/Program Files/obs-studio/bin/64bit/obs64.exe"'
+дискорд: '"C:/Users/Admin/AppData/Local/Discord/Update.exe" --processStart Discord.exe'
+discord: '"C:/Users/Admin/AppData/Local/Discord/Update.exe" --processStart Discord.exe'
+повершелл: '"C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"'
+powershell: '"C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"'
