@@ -1,3 +1,4 @@
+import pytest
 import johnny.brain_groq as brain_groq
 
 
@@ -93,4 +94,102 @@ def test_network_exception_marks_failure_for_cooldown(monkeypatch):
 
     monkeypatch.setattr(brain_groq, "post", boom)
     brain_groq.make_provider("ключ", "модель")("что-то")
+    assert marked == ["groq"]
+
+
+class FakeStream:
+    """Подставной ответ requests со stream=True."""
+
+    def __init__(self, lines, status_code=200, text=""):
+        self._lines = lines
+        self.status_code = status_code
+        self.text = text
+
+    def iter_lines(self, decode_unicode=False):
+        for line in self._lines:
+            yield line
+
+
+def _sse(*pieces):
+    """Строки SSE в формате OpenAI, как их шлёт Groq."""
+    out = []
+    for piece in pieces:
+        out.append('data: {"choices":[{"delta":{"content":"%s"}}]}' % piece)
+    out.append("data: [DONE]")
+    return out
+
+
+def test_streaming_yields_pieces_as_they_arrive(monkeypatch):
+    monkeypatch.setattr(
+        brain_groq, "post_stream", lambda *a, **k: FakeStream(_sse("При", "вет"))
+    )
+    provider = brain_groq.make_streaming_provider("k", "m")
+    assert list(provider("вопрос")) == ["При", "вет"]
+
+
+def test_streaming_asks_groq_for_a_stream(monkeypatch):
+    """Без "stream": true в теле Groq ответит обычным JSON, и iter_lines отдаст
+    его одной строкой — разбор молча вернёт пустоту."""
+    seen = {}
+
+    def fake(url, headers, payload, timeout):
+        seen.update(payload)
+        return FakeStream(_sse("да"))
+
+    monkeypatch.setattr(brain_groq, "post_stream", fake)
+    list(brain_groq.make_streaming_provider("k", "m")("вопрос"))
+    assert seen["stream"] is True
+
+
+def test_streaming_stops_on_done_marker(monkeypatch):
+    """После [DONE] Groq может держать соединение — не остановившись, Джони
+    молчал бы до сетевого таймаута уже ПОСЛЕ готового ответа."""
+    lines = _sse("готово") + ['data: {"choices":[{"delta":{"content":"лишнее"}}]}']
+    monkeypatch.setattr(brain_groq, "post_stream", lambda *a, **k: FakeStream(lines))
+    assert list(brain_groq.make_streaming_provider("k", "m")("в")) == ["готово"]
+
+
+def test_streaming_skips_keepalive_and_broken_lines(monkeypatch):
+    """SSE легально содержит пустые строки и комментарии, а последний кусок
+    приходит обрезанным при разрыве. Падать на них нельзя — уже озвученное
+    останется, а остаток дочитаем."""
+    lines = ["", ": keep-alive", 'data: {"choices":[{"delta":{}}]}',
+             "data: {битый", 'data: {"choices":[{"delta":{"content":"ок"}}]}',
+             "data: [DONE]"]
+    monkeypatch.setattr(brain_groq, "post_stream", lambda *a, **k: FakeStream(lines))
+    assert list(brain_groq.make_streaming_provider("k", "m")("в")) == ["ок"]
+
+
+def test_streaming_in_cooldown_yields_nothing(monkeypatch):
+    """Тот же щит, что у make_provider: не ждать сетевой таймаут на каждую
+    фразу, когда интернет только что пропал."""
+    monkeypatch.setattr(brain_groq, "in_cooldown", lambda key: True)
+    called = []
+    monkeypatch.setattr(brain_groq, "post_stream", lambda *a, **k: called.append(1))
+    assert list(brain_groq.make_streaming_provider("k", "m")("в")) == []
+    assert called == []
+
+
+def test_streaming_raises_stream_broken_on_http_error(monkeypatch):
+    """Обрыв обязан отличаться от нормального конца потока: после нормального
+    конца Джони молчит, после обрыва — говорит, что связь пропала."""
+    monkeypatch.setattr(
+        brain_groq, "post_stream",
+        lambda *a, **k: FakeStream([], status_code=429, text="rate limit"),
+    )
+    with pytest.raises(brain_groq.StreamBroken):
+        list(brain_groq.make_streaming_provider("k", "m")("в"))
+
+
+def test_streaming_failure_starts_cooldown(monkeypatch):
+    marked = []
+    monkeypatch.setattr(brain_groq, "mark_failure", lambda key: marked.append(key))
+    monkeypatch.setattr(brain_groq, "in_cooldown", lambda key: False)
+
+    def boom(*a, **k):
+        raise OSError("сеть пропала")
+
+    monkeypatch.setattr(brain_groq, "post_stream", boom)
+    with pytest.raises(brain_groq.StreamBroken):
+        list(brain_groq.make_streaming_provider("k", "m")("в"))
     assert marked == ["groq"]
