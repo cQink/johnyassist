@@ -137,6 +137,37 @@ def make_cached_prepare(synthesize, *, provider: str, voice_key: str, cache_dir)
     return prepare
 
 
+def _play_prepared(prepared: Prepared, *, play) -> Exception | None:
+    """Проиграть один Prepared. None — успех, иначе — пойманное исключение.
+
+    Общий блок для двух точек вызова play() в say() (первая попытка и
+    единственный пересинтез после сбоя кеш-файла), чтобы не дублировать
+    play/удаление/уборку целиком под копирку.
+
+    При неудаче кеш-файл (temporary=False) удаляется здесь же: иначе, если
+    и пересинтез следом не удастся (например, нет сети), битый файл остался
+    бы под тем же именем и проигрывался бы (безуспешно) вечно. Временный
+    файл удаляется в любом случае — и при успехе, и при неудаче, как раньше.
+
+    Варнинг в лог и решение "пересинтезировать или сразу fallback" — уже на
+    совести say(): у двух случаев (кеш-хит vs всё остальное) разный текст
+    лога и разное продолжение.
+    """
+    try:
+        play(prepared.path)
+        return None
+    except Exception as error:
+        if not prepared.temporary:
+            Path(prepared.path).unlink(missing_ok=True)
+        return error
+    finally:
+        if prepared.temporary:
+            try:
+                Path(prepared.path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cache_dir, play=None):
     """say() поверх synthesize(text) -> bytes; при любой неудаче — fallback.
 
@@ -154,27 +185,41 @@ def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cach
     def say(text: str) -> None:
         if not text:
             return
+
+        # Кеш-хит определяем ДО prepare(): если файл уже лежал на диске,
+        # сбой его проигрывания — повод пересинтезировать фразу заново
+        # (человек услышит её тем же голосом), а не сразу уходить на
+        # запасной. Для свежего файла (кеш-мисс или temporary) такой
+        # разницы нет — пересинтез только что уже случился.
+        cached = cache_path(cache_dir, text, voice_key) if len(text) <= MAX_CACHED_CHARS else None
+        was_cache_hit = cached is not None and cached.exists()
+
         prepared = prepare(text)
         if prepared.path is None:
             fallback(text)
             return
-        try:
-            play(prepared.path)
-        except Exception as error:
-            warn_once(
-                f"{provider}-play", f"Ошибка при проигрывании ({error}) — озвучиваю запасным голосом"
-            )
-            if not prepared.temporary:
-                # Файл из кеша не проигрался. Иначе, если пересинтез в
-                # следующий раз тоже не удастся, битый файл остался бы под тем
-                # же именем и проигрывался бы (безуспешно) вечно.
-                Path(prepared.path).unlink(missing_ok=True)
-            fallback(text)
-        finally:
-            if prepared.temporary:
-                try:
-                    Path(prepared.path).unlink(missing_ok=True)
-                except OSError:
-                    pass
+
+        error = _play_prepared(prepared, play=play)
+        if error is None:
+            return
+
+        if was_cache_hit:
+            # Файл из кеша не проигрался. Раньше человек в этот момент слышал
+            # фразу СВОИМ голосом: битый файл уже удалён (см. _play_prepared),
+            # и фраза синтезируется заново — ровно один раз (без цикла), после
+            # чего играется. Смена голоса на запасной из-за случайно битого
+            # файла в кеше была бы слышна и неожиданна.
+            warn_once(f"{provider}-cache", "Файл из кеша не проигрался — синтезирую заново")
+            retried = prepare(text)
+            if retried.path is not None:
+                retry_error = _play_prepared(retried, play=play)
+                if retry_error is None:
+                    return
+                error = retry_error
+
+        warn_once(
+            f"{provider}-play", f"Ошибка при проигрывании ({error}) — озвучиваю запасным голосом"
+        )
+        fallback(text)
 
     return say

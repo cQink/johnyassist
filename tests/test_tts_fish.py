@@ -207,6 +207,42 @@ def test_play_failure_on_cached_phrase_falls_back_and_deletes_broken_cache_file(
     assert not cached_path.exists()   # битый файл не остался лежать под тем же именем
 
 
+def test_play_failure_on_cached_phrase_resynthesizes_and_plays_without_fallback(monkeypatch, tmp_path):
+    """Битый файл в кеше — случайность (диск, оборванная запись), а не признак
+    того, что голос Джарвиса недоступен: сеть в этом тесте жива. Человек не
+    должен на ровном месте услышать смену голоса на запасной (Дмитрий) только
+    потому, что именно ЭТОТ файл на диске не проигрался — фраза обязана
+    пересинтезироваться и прозвучать СВОИМ голосом, а fallback звать не надо."""
+    events = {"http": [], "played": [], "fallback": []}
+    cached_path = tts_fish._cache_path(tmp_path, "Готово", "модель")
+    cached_path.parent.mkdir(parents=True, exist_ok=True)
+    cached_path.write_bytes(b"broken-bytes")
+
+    play_calls = []
+
+    def fake_post(url, headers, payload, timeout):
+        events["http"].append(payload["text"])
+        return FakeResponse(content=_MP3)
+
+    def flaky_play(path):
+        play_calls.append(path)
+        if len(play_calls) == 1:
+            raise RuntimeError("play error")  # первая попытка — тот самый битый файл
+        events["played"].append(path)
+
+    monkeypatch.setattr(tts_fish, "post", fake_post)
+    say = tts_fish.make_fish_tts(
+        "ключ", "модель", events["fallback"].append, cache_dir=tmp_path, play=flaky_play
+    )
+
+    say("Готово")
+
+    assert events["http"] == ["Готово"]          # пересинтез состоялся ровно один раз
+    assert len(events["played"]) == 1             # и фраза всё-таки прозвучала
+    assert events["fallback"] == []                # запасной голос не звали — не было смены голоса
+    assert cached_path.read_bytes() == _MP3        # битый файл заменён свежим синтезом
+
+
 def test_play_failure_on_freshly_cached_phrase_falls_back(monkeypatch, tmp_path):
     """Короткая фраза (кешируемая ветка), кеша ещё нет: play() свежесинтезированного
     файла бросает исключение → fallback, без необработанного исключения наружу."""
