@@ -103,3 +103,216 @@ def test_single_filler_is_allowed_to_repeat():
 def test_empty_list_means_no_filler():
     """Пустой список — это способ выключить филлеры, не выключая стриминг."""
     assert say_stream.Fillers([]).pick() == ""
+
+
+import threading
+import types
+
+import pytest
+
+
+def _voice(fail_after=None):
+    """Подставной голос: помнит, что синтезировали и что играли."""
+    state = types.SimpleNamespace(prepared=[], played=[], fallback=[])
+
+    def prepare(text):
+        state.prepared.append(text)
+        if fail_after is not None and len(state.prepared) > fail_after:
+            return types.SimpleNamespace(path=None, temporary=True)
+        return types.SimpleNamespace(path=f"/tmp/{len(state.prepared)}.mp3", temporary=True)
+
+    def play(path):
+        state.played.append(path)
+
+    def fallback(text):
+        state.fallback.append(text)
+
+    return say_stream.Voice(prepare=prepare, play=play, fallback=fallback), state
+
+
+def test_conversation_is_spoken_phrase_by_phrase():
+    voice, state = _voice()
+    result = say_stream.consume(
+        iter(["Привет. ", "Как дела? ", "Всё хорошо."]),
+        voice, fillers=say_stream.Fillers([]),
+    )
+    assert result.spoken is True
+    assert result.text == "Привет. Как дела? Всё хорошо."
+    assert state.prepared == ["Привет.", "Как дела?", "Всё хорошо."]
+    assert len(state.played) == 3
+
+
+def test_json_answer_is_never_spoken():
+    """Сторож: без него Джони однажды зачитает вслух {"command": ...}."""
+    voice, state = _voice()
+    result = say_stream.consume(
+        iter(['{"command": ', '"громкость 5"}']),
+        voice, fillers=say_stream.Fillers(["Секунду"]),
+    )
+    assert result.spoken is False
+    assert state.prepared == []
+    assert state.fallback == []
+    assert result.text == '{"command": "громкость 5"}'
+
+
+def test_filler_plays_before_the_first_phrase():
+    """Филлер — единственное, что звучит в первые секунды: синтез первой фразы
+    быстрее не станет."""
+    voice, state = _voice()
+    say_stream.consume(
+        iter(["Дела отличные, спасибо. "]),
+        voice, fillers=say_stream.Fillers(["Секунду"]),
+    )
+    assert state.prepared[0] == "Секунду"
+
+
+def test_filler_is_silent_on_the_command_branch():
+    """Человек попросил действие, а не разговор: «секундочку» перед выполнением
+    команды — лишний звук."""
+    voice, state = _voice()
+    say_stream.consume(
+        iter(['{"command": "громкость 5"}']),
+        voice, fillers=say_stream.Fillers(["Секунду"]),
+    )
+    assert "Секунду" not in state.prepared
+
+
+def test_next_phrase_is_synthesised_while_the_previous_one_plays():
+    """Ядро всей затеи. Если синтез ждёт конца проигрывания, пауза между
+    фразами равна времени синтеза и выигрыш исчезает на второй же фразе."""
+    order = []
+    playing = threading.Event()
+
+    def prepare(text):
+        order.append(f"синтез:{text}")
+        return types.SimpleNamespace(path=f"/tmp/{text}.mp3", temporary=True)
+
+    def play(path):
+        order.append(f"играю:{path}")
+        playing.set()
+        # Держим «проигрывание», пока синтез второй фразы не успеет начаться.
+        import time
+        time.sleep(0.15)
+
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=lambda text: None)
+    say_stream.consume(
+        iter(["Раз. ", "Два. "]), voice, fillers=say_stream.Fillers([])
+    )
+    # Синтез «Два.» обязан стоять в списке РАНЬШЕ, чем закончилось
+    # проигрывание «Раз.» — то есть раньше «играю:/tmp/Два..mp3».
+    assert order.index("синтез:Два.") < order.index("играю:/tmp/Два..mp3")
+
+
+def test_fish_failure_speaks_the_remainder_in_one_piece():
+    """Пофразное переключение голоса туда-обратно звучит как поломка. Остаток
+    доигрывается одним куском запасным голосом."""
+    voice, state = _voice(fail_after=1)
+    result = say_stream.consume(
+        iter(["Раз. ", "Два. ", "Три."]), voice, fillers=say_stream.Fillers([])
+    )
+    assert result.spoken is True
+    assert state.fallback == ["Два. Три."]
+
+
+def test_broken_stream_is_announced_out_loud():
+    """Молчание после половины ответа неотличимо от законченного ответа, и
+    человек не переспросит."""
+    def chunks():
+        yield "Начал отвечать. "
+        raise say_stream.StreamBroken("сеть пропала")
+
+    voice, state = _voice()
+    result = say_stream.consume(chunks(), voice, fillers=say_stream.Fillers([]))
+    assert result.broken is True
+    assert result.spoken is True
+    assert state.fallback and "связь" in state.fallback[-1].lower()
+
+
+def test_broken_stream_before_any_speech_stays_silent():
+    """Ничего не успели сказать — пусть отвечает следующий провайдер, а не
+    Джони с извинениями."""
+    def chunks():
+        raise say_stream.StreamBroken("сеть пропала")
+        yield ""
+
+    voice, state = _voice()
+    result = say_stream.consume(chunks(), voice, fillers=say_stream.Fillers([]))
+    assert result.broken is True
+    assert result.spoken is False
+    assert state.fallback == []
+
+
+def test_stop_breaks_the_whole_pipeline_not_just_the_current_phrase():
+    """«Стоп» обязан отменить и то, что ещё не синтезировано: иначе Джони
+    договаривает уже отменённый ответ, а Fish берёт за это деньги."""
+    cancel = threading.Event()
+    cancel.set()
+    voice, state = _voice()
+    result = say_stream.consume(
+        iter(["Раз. ", "Два. ", "Три."]), voice,
+        fillers=say_stream.Fillers([]), cancel=cancel,
+    )
+    assert state.prepared == []
+    assert state.played == []
+    assert result.spoken is False
+
+
+def test_empty_stream_is_not_an_error():
+    voice, state = _voice()
+    result = say_stream.consume(iter([]), voice, fillers=say_stream.Fillers([]))
+    assert result.text == ""
+    assert result.spoken is False
+    assert result.broken is False
+
+
+def test_short_json_without_a_dot_is_still_not_spoken():
+    """Ответ {"command": "громкость 5"} — 26 знаков и ни одной точки, то есть
+    решение о ветке внутри цикла принято НЕ БУДЕТ. Без решения после цикла
+    хвост ушёл бы в озвучку, и Джони зачитал бы JSON вслух."""
+    voice, state = _voice()
+    result = say_stream.consume(
+        iter(['{"command": "громкость 5"}']), voice, fillers=say_stream.Fillers([])
+    )
+    assert result.spoken is False
+    assert state.prepared == []
+
+
+def test_stop_mid_stream_cleans_up_already_synthesised_files(tmp_path):
+    """«Стоп» может прийти, когда следующая фраза уже засинтезирована, но ещё
+    не сыграна: очередь на проигрывание отбрасывает её, но временный mp3-файл
+    должен быть удалён, а не остаться в TEMP навсегда."""
+    cancel = threading.Event()
+    made = []
+    second_ready = threading.Event()
+
+    def prepare(text):
+        path = tmp_path / f"{text}.mp3"
+        path.write_bytes(b"data")
+        made.append(path)
+        if text == "Два.":
+            second_ready.set()
+        return types.SimpleNamespace(path=str(path), temporary=True)
+
+    def play(path):
+        if path.endswith("Раз..mp3"):
+            # Ждём, пока «Два.» точно засинтезируется и встанет в очередь на
+            # проигрывание, и только тогда просим остановиться.
+            second_ready.wait(timeout=1)
+            cancel.set()
+
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=lambda text: None)
+    say_stream.consume(
+        iter(["Раз. ", "Два. ", "Три."]), voice,
+        fillers=say_stream.Fillers([]), cancel=cancel,
+    )
+    assert made, "тест должен был что-то засинтезировать до стопа"
+    assert all(not path.exists() for path in made)
+
+
+def test_module_does_not_log_what_it_speaks():
+    """Содержимое ответа не должно оседать на диске: history.log открывается
+    кнопкой в панели и попадает на скриншоты. Сторож на весь модуль — снять
+    его можно только осознанно."""
+    import inspect
+
+    assert "logger" not in inspect.getsource(say_stream)
