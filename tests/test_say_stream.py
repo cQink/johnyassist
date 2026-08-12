@@ -61,3 +61,20 @@ def test_command_branch_is_recognised_by_a_fence():
 
 def test_ordinary_answer_is_not_a_command():
     assert say_stream.looks_like_command("Дела отлично, спасибо") is False
+
+
+def test_cut_bounds_sentences_from_below():
+    """При sentences ≤ 0 функция должна вернуть ровно одну фразу, а не все.
+
+    Иначе озвучится весь ответ вместо одной фразы (Джони зачитает не то),
+    а при отрицательном значении ещё и упадёт на IndexError.
+    """
+    # sentences=0 должен вернуть первую фразу, не все
+    phrase, rest = say_stream.cut("Раз. Два. Три.", 120, sentences=0)
+    assert phrase == "Раз."
+    assert rest == "Два. Три."
+
+    # sentences=-3 должен вернуть первую фразу, не упасть
+    phrase, rest = say_stream.cut("Раз. Два.", 120, sentences=-3)
+    assert phrase == "Раз."
+    assert rest == "Два."

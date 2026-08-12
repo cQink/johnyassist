@@ -40,7 +40,7 @@ def cut(buffer: str, limit: int, sentences: int = 1) -> tuple[str, str]:
     """
     ends = [match.end() for match in _BOUNDARY.finditer(buffer)]
     if ends:
-        end = ends[min(sentences, len(ends)) - 1]
+        end = ends[min(max(1, sentences), len(ends)) - 1]
         return buffer[:end].strip(), buffer[end:].lstrip()
     if len(buffer) >= limit:
         # По границе слова: обрывок посреди слова слышен как заикание.
