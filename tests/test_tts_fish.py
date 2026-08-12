@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import johnny.tts_cache as tts_cache
@@ -289,3 +291,68 @@ def test_network_failure_marks_cooldown(monkeypatch, tmp_path):
     say, events = _fish(monkeypatch, tmp_path, boom=True)
     say("Не понял команду")
     assert marked == ["fish"]
+
+
+def test_prepare_returns_a_file_instead_of_playing_it(tmp_path):
+    """Ядро конвейера: синтез отдаёт ФАЙЛ, а играет его кто-то другой и позже.
+    Слитые вместе, они не дают синтезировать следующую фразу во время
+    проигрывания предыдущей."""
+    prepare = tts_cache.make_cached_prepare(
+        lambda text: b"ID3" + b"x" * 100,
+        provider="fish", voice_key="v", cache_dir=tmp_path,
+    )
+    prepared = prepare("привет")
+    assert prepared.path is not None
+    assert Path(prepared.path).exists()
+
+
+def test_prepare_reuses_the_cache_for_short_phrases(tmp_path):
+    """Филлеры короткие и звучат сотнями раз: второй раз они обязаны браться
+    с диска, иначе филлер сам станет задержкой, которую призван скрыть."""
+    calls = []
+
+    def synth(text):
+        calls.append(text)
+        return b"ID3" + b"x" * 100
+
+    prepare = tts_cache.make_cached_prepare(
+        synth, provider="fish", voice_key="v", cache_dir=tmp_path
+    )
+    first = prepare("Секунду")
+    second = prepare("Секунду")
+    assert calls == ["Секунду"]
+    assert first.path == second.path
+    assert first.temporary is False
+
+
+def test_prepare_marks_long_answers_as_temporary(tmp_path):
+    """Ответы модели дословно не повторяются — их файлы удаляются после
+    проигрывания, иначе кеш зарастает мусором."""
+    prepare = tts_cache.make_cached_prepare(
+        lambda text: b"ID3" + b"x" * 100,
+        provider="fish", voice_key="v", cache_dir=tmp_path,
+    )
+    prepared = prepare("а" * (tts_cache.MAX_CACHED_CHARS + 1))
+    assert prepared.temporary is True
+
+
+def test_prepare_reports_failure_instead_of_raising(tmp_path):
+    """Отказ синтеза в середине ответа не должен ронять конвейер: остаток
+    доигрывает запасной голос, а решает это зовущий."""
+    def boom(text):
+        raise RuntimeError("fish отказал")
+
+    prepare = tts_cache.make_cached_prepare(
+        boom, provider="fish-test-fail", voice_key="v", cache_dir=tmp_path
+    )
+    assert prepare("привет").path is None
+
+
+def test_prepare_rejects_a_body_that_is_not_mp3(tmp_path):
+    """Cloudflare отдаёт 200 со страницей вместо mp3 — попав в кеш, она
+    проигрывалась бы вечно."""
+    prepare = tts_cache.make_cached_prepare(
+        lambda text: b"<html>not mp3</html>",
+        provider="fish-test-html", voice_key="v", cache_dir=tmp_path,
+    )
+    assert prepare("привет").path is None

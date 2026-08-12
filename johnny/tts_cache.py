@@ -12,6 +12,7 @@ NeMo/XTTS-сервис): проверка тела на mp3, кеш коротк
 import os
 import random
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import sounds
@@ -75,60 +76,104 @@ def trim(cache_dir, limit: int = MAX_CACHE_FILES) -> None:
         old.unlink(missing_ok=True)
 
 
-def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cache_dir, play=None):
-    """say() поверх synthesize(text) -> bytes; при любой неудаче — fallback.
+@dataclass
+class Prepared:
+    """Результат синтеза: файл, готовый к проигрыванию.
 
-    provider — ключ для cooldown и лога (свой у каждого сервиса: отказ
-    локального NeMo не должен глушить попытки к fish и наоборот).
+    path=None — синтез не удался, и решать, что делать (запасной голос),
+    будет зовущий: у конвейера и у обычного say разные правильные ответы.
+    temporary=True — файл временный, удалить после проигрывания.
     """
-    play = sounds.play_file if play is None else play
 
-    def say(text: str) -> None:
+    path: str | None
+    temporary: bool = False
+
+
+def make_cached_prepare(synthesize, *, provider: str, voice_key: str, cache_dir):
+    """prepare(text) -> Prepared: синтез в файл, БЕЗ проигрывания.
+
+    Разделение синтеза и проигрывания нужно конвейеру стриминга: следующая
+    фраза синтезируется, пока играет предыдущая. Слитые вместе (см.
+    make_cached_tts, который построен на этой же функции), они делают паузу
+    между фразами равной времени синтеза.
+    """
+
+    def prepare(text: str) -> Prepared:
         if not text:
-            return
+            return Prepared(None)
         cached = cache_path(cache_dir, text, voice_key) if len(text) <= MAX_CACHED_CHARS else None
         if cached is not None and cached.exists():
-            try:
-                play(str(cached))
-                return
-            except Exception:
-                warn_once(f"{provider}-cache", "Файл из кеша не проигрался — синтезирую заново")
-                # Иначе, если пересинтез ниже тоже не удастся (например, сети
-                # нет), битый файл остался бы под тем же именем и проигрывался
-                # бы (безуспешно) на каждом следующем вызове — вечно.
-                cached.unlink(missing_ok=True)
+            return Prepared(str(cached), temporary=False)
 
         if in_cooldown(provider):
-            # Недавно уже не достучались до сервиса: не ждём заново полный
-            # таймаут на эту же фразу, сразу отдаём голос запасному варианту.
-            fallback(text)
-            return
+            return Prepared(None)
 
         try:
             data = synthesize(text)
         except Exception as error:
             mark_failure(provider)
             warn_once(provider, f"{provider} недоступен ({error}) — озвучиваю запасным голосом")
-            fallback(text)
-            return
+            return Prepared(None)
+
+        if not looks_like_mp3(data):
+            # Провайдер ответил 200 с телом, которое не mp3 (страница
+            # Cloudflare, JSON про тариф). В кеш это класть нельзя.
+            mark_failure(provider)
+            warn_once(provider, f"{provider} отдал не mp3 — озвучиваю запасным голосом")
+            return Prepared(None)
 
         path = cached or Path(tempfile.gettempdir()) / (
             f"johnny_{provider}_{os.getpid()}_{random.randint(0, 1_000_000)}.mp3"
         )
         try:
             store(path, data)
-            if cached is not None:
-                trim(cache_dir)
-            play(str(path))
+        except Exception as error:
+            warn_once(f"{provider}-store", f"Не смог сохранить синтез ({error})")
+            return Prepared(None)
+        if cached is not None:
+            trim(cache_dir)
+        return Prepared(str(path), temporary=cached is None)
+
+    return prepare
+
+
+def make_cached_tts(synthesize, *, provider: str, voice_key: str, fallback, cache_dir, play=None):
+    """say() поверх synthesize(text) -> bytes; при любой неудаче — fallback.
+
+    provider — ключ для cooldown и лога (свой у каждого сервиса: отказ
+    локального NeMo не должен глушить попытки к fish и наоборот).
+
+    Синтез живёт в make_cached_prepare — тот же код обслуживает конвейер
+    стриминга, где файл готовится заранее, а играется позже.
+    """
+    play = sounds.play_file if play is None else play
+    prepare = make_cached_prepare(
+        synthesize, provider=provider, voice_key=voice_key, cache_dir=cache_dir
+    )
+
+    def say(text: str) -> None:
+        if not text:
+            return
+        prepared = prepare(text)
+        if prepared.path is None:
+            fallback(text)
+            return
+        try:
+            play(prepared.path)
         except Exception as error:
             warn_once(
                 f"{provider}-play", f"Ошибка при проигрывании ({error}) — озвучиваю запасным голосом"
             )
+            if not prepared.temporary:
+                # Файл из кеша не проигрался. Иначе, если пересинтез в
+                # следующий раз тоже не удастся, битый файл остался бы под тем
+                # же именем и проигрывался бы (безуспешно) вечно.
+                Path(prepared.path).unlink(missing_ok=True)
             fallback(text)
         finally:
-            if cached is None:
+            if prepared.temporary:
                 try:
-                    path.unlink(missing_ok=True)
+                    Path(prepared.path).unlink(missing_ok=True)
                 except OSError:
                     pass
 
