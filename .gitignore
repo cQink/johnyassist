@@ -26,3 +26,4 @@ models/face-index/
 
 # Кеш pytest — служебный, в истории не нужен
 .pytest_cache/
+.superpowers/
