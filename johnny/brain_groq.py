@@ -84,6 +84,7 @@ def make_streaming_provider(api_key: str, model: str):
             )
             if response.status_code != 200:
                 raise RuntimeError(f"Groq HTTP {response.status_code}: {response.text[:120]}")
+            done = False
             for line in response.iter_lines(decode_unicode=True):
                 # Пустые строки и комментарии (": keep-alive") — легальная
                 # часть SSE, а не сбой.
@@ -91,7 +92,8 @@ def make_streaming_provider(api_key: str, model: str):
                     continue
                 payload = line[len("data:"):].strip()
                 if payload == "[DONE]":
-                    return
+                    done = True
+                    break
                 try:
                     piece = json.loads(payload)["choices"][0]["delta"].get("content") or ""
                 except (json.JSONDecodeError, KeyError, IndexError):
@@ -100,6 +102,12 @@ def make_streaming_provider(api_key: str, model: str):
                     continue
                 if piece:
                     yield piece
+            if not done:
+                # Строки кончились, а [DONE] не пришёл: соединение оборвалось
+                # молча, без HTTP-ошибки и без исключения от iter_lines.
+                # Это обрыв, а не нормальный конец — падаем в тот же except,
+                # что и остальные сетевые сбои.
+                raise RuntimeError("Groq поток оборвался без [DONE]")
         except Exception as error:
             mark_failure("groq")
             warn_once("groq", f"Groq оборвал поток ({error})")

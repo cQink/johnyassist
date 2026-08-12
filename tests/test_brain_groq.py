@@ -181,6 +181,17 @@ def test_streaming_raises_stream_broken_on_http_error(monkeypatch):
         list(brain_groq.make_streaming_provider("k", "m")("в"))
 
 
+def test_streaming_raises_stream_broken_when_lines_end_without_done(monkeypatch):
+    """Сеть может замолчать без HTTP-ошибки и без исключения от iter_lines —
+    строки просто кончаются, а [DONE] так и не пришёл. Это неотличимо от
+    нормального конца, если не проверять сам факт [DONE]: тогда Джони молчал
+    бы после половины ответа, будто договорил до конца."""
+    lines = _sse("часть")[:-1]  # без "data: [DONE]" — обрыв на середине
+    monkeypatch.setattr(brain_groq, "post_stream", lambda *a, **k: FakeStream(lines))
+    with pytest.raises(brain_groq.StreamBroken):
+        list(brain_groq.make_streaming_provider("k", "m")("в"))
+
+
 def test_streaming_failure_starts_cooldown(monkeypatch):
     marked = []
     monkeypatch.setattr(brain_groq, "mark_failure", lambda key: marked.append(key))
