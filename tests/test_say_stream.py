@@ -78,3 +78,28 @@ def test_cut_bounds_sentences_from_below():
     phrase, rest = say_stream.cut("Раз. Два.", 120, sentences=-3)
     assert phrase == "Раз."
     assert rest == "Два."
+
+
+def test_filler_returns_one_of_the_phrases():
+    fillers = say_stream.Fillers(["Секунду", "Момент"])
+    assert fillers.pick() in ("Секунду", "Момент")
+
+
+def test_filler_never_repeats_itself_twice_in_a_row():
+    """Повтор одной и той же фразы подряд слышен сразу и звучит поломкой.
+    random.choice (как в _ACK_PHRASES) этого не гарантирует."""
+    fillers = say_stream.Fillers(["Секунду", "Момент", "Сейчас"])
+    said = [fillers.pick() for _ in range(30)]
+    assert all(first != second for first, second in zip(said, said[1:]))
+
+
+def test_single_filler_is_allowed_to_repeat():
+    """Иначе список из одной фразы не смог бы вернуть ничего вовсе."""
+    fillers = say_stream.Fillers(["Секунду"])
+    assert fillers.pick() == "Секунду"
+    assert fillers.pick() == "Секунду"
+
+
+def test_empty_list_means_no_filler():
+    """Пустой список — это способ выключить филлеры, не выключая стриминг."""
+    assert say_stream.Fillers([]).pick() == ""

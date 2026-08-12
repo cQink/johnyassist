@@ -11,6 +11,7 @@
 Подробности решения — docs/superpowers/specs/2026-08-12-streaming-voice-design.md
 """
 
+import random
 import re
 
 # Конец предложения вместе с закрывающими кавычками и скобками: «Да!» — фраза
@@ -48,3 +49,27 @@ def cut(buffer: str, limit: int, sentences: int = 1) -> tuple[str, str]:
         end = space if space > 0 else limit
         return buffer[:end].strip(), buffer[end:].lstrip()
     return "", buffer
+
+
+class Fillers:
+    """Короткие реплики, которые играют, пока готовится первая фраза.
+
+    Именно они убирают паузу до первого слова: быстрее, чем за время синтеза,
+    первую фразу не получить, а филлер после первого раза лежит в кеше и
+    играет с диска мгновенно (все фразы короче tts_cache.MAX_CACHED_CHARS —
+    это требование к списку, а не совпадение).
+    """
+
+    def __init__(self, phrases):
+        self._phrases = [str(phrase).strip() for phrase in (phrases or []) if str(phrase).strip()]
+        self._last = ""
+
+    def pick(self) -> str:
+        """Случайная фраза, но не та же, что в прошлый раз. "" = филлеров нет."""
+        if not self._phrases:
+            return ""
+        choices = [phrase for phrase in self._phrases if phrase != self._last]
+        # Список из одной фразы: повтор разрешён, иначе выбирать не из чего.
+        chosen = random.choice(choices or self._phrases)
+        self._last = chosen
+        return chosen
