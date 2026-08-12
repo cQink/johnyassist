@@ -44,6 +44,25 @@ def post(url: str, headers: dict, payload: dict, timeout: float) -> requests.Res
     )
 
 
+def post_stream(url: str, headers: dict, payload: dict, timeout: float) -> requests.Response:
+    """POST, ответ которого читается по мере поступления (SSE у Groq).
+
+    Отличие от post ровно одно — stream=True, и оно принципиально: без него
+    requests скачивает тело целиком прежде, чем вернуть управление, то есть
+    весь смысл стриминга пропадает МОЛЧА — код при этом выглядит рабочим.
+
+    timeout здесь — время до ПЕРВОГО байта, а не на весь ответ: длинный поток
+    законно идёт дольше, и общего потолка на него нет.
+    """
+    return requests.post(
+        url,
+        headers={**headers, "User-Agent": USER_AGENT},
+        json=payload,
+        timeout=timeout,
+        stream=True,
+    )
+
+
 def post_form(
     url: str, headers: dict, data: dict, timeout: float, files: dict | None = None
 ) -> requests.Response:

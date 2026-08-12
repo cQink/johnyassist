@@ -74,3 +74,33 @@ def test_cooldown_is_tracked_per_key(monkeypatch):
     monkeypatch.setattr(http_client.time, "monotonic", lambda: 100.0)
     http_client.mark_failure("fish")
     assert http_client.in_cooldown("groq") is False
+
+
+def test_post_stream_asks_requests_not_to_buffer(monkeypatch):
+    """Без stream=True requests скачивает ответ целиком перед возвратом — то
+    есть SSE-поток Groq пришёл бы одним куском в конце, и стриминга бы не было
+    вовсе, причём молча: код выглядел бы рабочим."""
+    seen = {}
+
+    def fake_post(url, **kwargs):
+        seen.update(kwargs)
+        return "ответ"
+
+    monkeypatch.setattr(http_client.requests, "post", fake_post)
+    assert http_client.post_stream("http://x", {}, {"a": 1}, 5.0) == "ответ"
+    assert seen["stream"] is True
+
+
+def test_post_stream_keeps_the_browser_user_agent(monkeypatch):
+    """Groq стоит за Cloudflare, который режет клиентов без User-Agent, —
+    потоковому запросу заголовок нужен ровно так же, как обычному."""
+    seen = {}
+
+    def fake_post(url, **kwargs):
+        seen.update(kwargs)
+        return "ответ"
+
+    monkeypatch.setattr(http_client.requests, "post", fake_post)
+    http_client.post_stream("http://x", {"Authorization": "Bearer k"}, {}, 5.0)
+    assert seen["headers"]["User-Agent"] == http_client.USER_AGENT
+    assert seen["headers"]["Authorization"] == "Bearer k"
