@@ -2,18 +2,25 @@ import logging
 import random
 import threading
 
+from . import say_stream
+
 logger = logging.getLogger(__name__)
 
 _ACK_PHRASES = ["Слушаю", "Да, сэр", "Слушаю вас"]
 
 
 class Speaker:
-    def __init__(self, mode: str, tts=None, beep=None, play_wakeup=None, play_answer=None):
+    def __init__(self, mode: str, tts=None, beep=None, play_wakeup=None, play_answer=None,
+                 stream_voice=None, fillers=None, first_limit: int = 120):
         self.mode = mode
         self._tts = tts
         self._beep = beep
         self._play_wakeup = play_wakeup  # callable() -> bool (проиграл ли звук)
         self._play_answer = play_answer  # callable() -> bool
+        # Конвейер стриминга: None = недоступен (не fish, или выключен).
+        self._stream_voice = stream_voice
+        self._fillers = fillers if fillers is not None else say_stream.Fillers([])
+        self._first_limit = first_limit
 
     def say(self, text: str) -> None:
         if self.mode == "voice" and self._tts is not None:
@@ -21,6 +28,23 @@ class Speaker:
         elif self.mode == "beep" and self._beep is not None:
             self._beep()
         # mode == "off": молчание
+
+    def say_stream(self, chunks, cancel=None):
+        """Озвучить поток кусков текста конвейером. None = конвейер недоступен.
+
+        None означает «иди старым путём» и возвращается честно: на edge-голосе
+        синтез и проигрывание неразделимы, а при streaming: false конвейера нет
+        по решению человека.
+        """
+        if self.mode != "voice" or self._stream_voice is None:
+            return None
+        return say_stream.consume(
+            chunks,
+            self._stream_voice,
+            fillers=self._fillers,
+            first_limit=self._first_limit,
+            cancel=cancel,
+        )
 
     def acknowledge(self) -> None:
         """Услышал «Джонни»: свой wakeup-звук, иначе — сигнал + голос."""
@@ -216,6 +240,35 @@ def _make_fish_or_edge(settings, secrets, edge):
     return edge
 
 
+def _make_stream_voice(settings, secrets):
+    """say_stream.Voice или None, если конвейер на этом голосе невозможен.
+
+    Возможен он только на fish: там синтез отдаёт mp3 отдельным шагом
+    (tts_cache.make_cached_prepare), и файл можно готовить, пока играет
+    предыдущий. У edge синтез и проигрывание слиты внутри edge_tts, у pyttsx3
+    файла нет вовсе — обещать там стриминг было бы обманом.
+    """
+    if not getattr(settings, "streaming", False):
+        return None
+    api_key = (secrets or {}).get("fish_api_key")
+    if settings.tts_provider not in ("fish", "local") or not api_key or not settings.fish_model_id:
+        return None
+
+    from . import sounds, tts_cache
+    from .tts_fish import _CACHE_DIR, synthesize
+
+    prepare = tts_cache.make_cached_prepare(
+        lambda text: synthesize(text, api_key, settings.fish_model_id),
+        provider="fish",
+        voice_key=settings.fish_model_id,
+        cache_dir=_CACHE_DIR,
+    )
+    # Запасной голос — тот же edge-Дмитрий, что и у обычного say: остаток
+    # ответа после отказа Fish договаривает он.
+    fallback = _make_edge_tts(settings.tts_voice, _make_tts(settings.tts_volume))
+    return say_stream.Voice(prepare=prepare, play=sounds.play_file, fallback=fallback)
+
+
 def make_speaker(settings, secrets=None) -> Speaker:
     mode = settings.response_mode
     tts = _make_voice_tts(settings, secrets) if mode == "voice" else None
@@ -227,4 +280,14 @@ def make_speaker(settings, secrets=None) -> Speaker:
         sounds.set_volume(settings.tts_volume)
         play_wakeup = lambda: sounds.play_random("wakeup")  # noqa: E731
         play_answer = lambda: sounds.play_random("answer")  # noqa: E731
-    return Speaker(mode, tts=tts, beep=beep, play_wakeup=play_wakeup, play_answer=play_answer)
+    stream_voice = _make_stream_voice(settings, secrets) if mode == "voice" else None
+    return Speaker(
+        mode,
+        tts=tts,
+        beep=beep,
+        play_wakeup=play_wakeup,
+        play_answer=play_answer,
+        stream_voice=stream_voice,
+        fillers=say_stream.Fillers(getattr(settings, "streaming_fillers", [])),
+        first_limit=int(getattr(settings, "streaming_first_chunk", 120)),
+    )

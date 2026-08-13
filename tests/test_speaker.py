@@ -1,8 +1,11 @@
 import builtins
+import types
 
 import pytest
 
+import johnny.say_stream as say_stream
 import johnny.speaker as speaker
+import johnny.speaker as speaker_module
 from johnny.config import Settings
 from johnny.speaker import Speaker, _ACK_PHRASES, _make_edge_tts
 
@@ -392,3 +395,60 @@ def test_make_speaker_falls_back_when_audio_dependencies_missing(monkeypatch):
     assert sp._tts is not None
     assert sp._beep is not None
     importlib.reload(speaker)
+
+
+def test_say_stream_is_unavailable_without_fish(monkeypatch):
+    """На edge-голосе синтез и проигрывание неразделимы — конвейер обязан
+    честно сказать «не могу», а не изображать стриминг."""
+    settings = types.SimpleNamespace(
+        response_mode="voice", tts_provider="edge", tts_voice="ru-RU-DmitryNeural",
+        tts_volume=1.0, fish_model_id="", tts_local_url="", tts_voice_id="",
+        tts_style="", streaming=True, streaming_fillers=[], streaming_first_chunk=120,
+    )
+    speaker = speaker_module.make_speaker(settings, secrets={})
+    assert speaker.say_stream(iter(["привет"])) is None
+
+
+def test_say_stream_is_unavailable_when_streaming_is_off(monkeypatch):
+    """Выключатель обязан возвращать РОВНО прежнее поведение — это
+    единственный откат, если стриминг окажется хуже."""
+    settings = types.SimpleNamespace(
+        response_mode="voice", tts_provider="fish", tts_voice="ru-RU-DmitryNeural",
+        tts_volume=1.0, fish_model_id="voice-1", tts_local_url="", tts_voice_id="",
+        tts_style="", streaming=False, streaming_fillers=["Секунду"],
+        streaming_first_chunk=120,
+    )
+    speaker = speaker_module.make_speaker(settings, secrets={"fish_api_key": "k"})
+    assert speaker.say_stream(iter(["привет"])) is None
+
+
+def test_say_stream_runs_the_pipeline_when_fish_is_configured(monkeypatch):
+    seen = {}
+
+    def fake_consume(chunks, voice, **kwargs):
+        seen["chunks"] = list(chunks)
+        seen["fillers"] = kwargs["fillers"]
+        return say_stream.StreamResult(text="привет", spoken=True)
+
+    monkeypatch.setattr(speaker_module.say_stream, "consume", fake_consume)
+    settings = types.SimpleNamespace(
+        response_mode="voice", tts_provider="fish", tts_voice="ru-RU-DmitryNeural",
+        tts_volume=1.0, fish_model_id="voice-1", tts_local_url="", tts_voice_id="",
+        tts_style="", streaming=True, streaming_fillers=["Секунду"],
+        streaming_first_chunk=120,
+    )
+    speaker = speaker_module.make_speaker(settings, secrets={"fish_api_key": "k"})
+    result = speaker.say_stream(iter(["привет"]))
+    assert result.spoken is True
+    assert seen["chunks"] == ["привет"]
+
+
+def test_say_stream_is_silent_in_off_mode():
+    """response_mode: off значит молчать — стриминг не исключение."""
+    settings = types.SimpleNamespace(
+        response_mode="off", tts_provider="fish", tts_voice="ru-RU-DmitryNeural",
+        tts_volume=1.0, fish_model_id="voice-1", tts_local_url="", tts_voice_id="",
+        tts_style="", streaming=True, streaming_fillers=[], streaming_first_chunk=120,
+    )
+    speaker = speaker_module.make_speaker(settings, secrets={"fish_api_key": "k"})
+    assert speaker.say_stream(iter(["привет"])) is None
