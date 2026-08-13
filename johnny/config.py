@@ -45,6 +45,21 @@ class Settings:
     # пути git запускался бы в папке, из которой стартовал Джони, и рассказывал
     # бы про ЧУЖОЙ репозиторий — а человек бы этого не заметил.
     git_workdir: str = ""
+    # Стриминг голоса: Groq отдаёт ответ по токенам, Fish поёт его по фразам,
+    # филлер закрывает паузу до первой фразы. Выключено по умолчанию: стриминг
+    # меняет то, КАК звучит Джони (между фразами слышна пауза, интонация через
+    # границу не тянется), и такое решение принимает человек, а не настройка
+    # по умолчанию. false = сегодняшнее поведение целиком.
+    streaming: bool = False
+    # Потолок ожидания первой фразы в знаках. Модель иногда сыплет текст без
+    # единой точки — без потолка первая фраза дождалась бы конца ответа, то
+    # есть стриминга бы не было вовсе.
+    streaming_first_chunk: int = 120
+    # Реплики, которые играют, ПОКА готовится первая фраза. Каждая обязана быть
+    # короче tts_cache.MAX_CACHED_CHARS (40) — иначе она не попадёт в кеш,
+    # будет синтезироваться каждый раз и сама станет задержкой, которую
+    # призвана скрыть. Слишком длинные отбрасываются при загрузке.
+    streaming_fillers: list[str] = field(default_factory=list)
     # Внешние тулзы (Azure Vision, Face++, social-analyzer, переводчик):
     # согласие, квоты, адрес ресурса, глубина обхода. Пустой блок = всё
     # выключено, и это правильное значение по умолчанию — коннекторы тратят
@@ -69,6 +84,19 @@ class Config:
 
 def _read_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _short_fillers(raw) -> list[str]:
+    """Филлеры, которые влезают в кеш TTS. Длинные отбрасываем молча.
+
+    Порог здесь не для красоты: кешируются реплики короче
+    tts_cache.MAX_CACHED_CHARS, а некешируемый филлер синтезируется при каждом
+    ответе и сам становится той задержкой, ради устранения которой он и нужен.
+    Значение продублировано числом намеренно: тянуть в конфиг импорт tts_cache
+    (а с ним sounds и requests) ради одной константы дороже, чем этот комментарий.
+    """
+    limit = 40
+    return [str(phrase).strip() for phrase in raw if 0 < len(str(phrase).strip()) <= limit]
 
 
 def load_config(config_dir) -> Config:
@@ -102,6 +130,10 @@ def load_config(config_dir) -> Config:
         strong_brain_base_url=s.get("strong_brain_base_url", ""),
         strong_brain_first=bool(s.get("strong_brain_first", False)),
         tts_volume=float(s.get("tts_volume", 1.0)),
+        git_workdir=s.get("git_workdir", ""),
+        streaming=bool(s.get("streaming", False)),
+        streaming_first_chunk=int(s.get("streaming_first_chunk", 120)),
+        streaming_fillers=_short_fillers(s.get("streaming_fillers") or []),
         connectors=s.get("connectors") or {},
     )
 

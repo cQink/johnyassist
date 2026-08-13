@@ -1,4 +1,5 @@
 from pathlib import Path
+import johnny.config as config
 from johnny.config import load_config, CommandRule, Settings
 
 
@@ -181,3 +182,56 @@ def test_без_файла_людей_словарь_пустой(tmp_path):
     (tmp_path / "settings.yaml").write_text("wake_word: джони\n", encoding="utf-8")
 
     assert load_config(tmp_path).people == {}
+
+
+def test_streaming_is_off_by_default():
+    """Новое поведение включает человек: стриминг меняет то, КАК звучит Джони,
+    и по умолчанию звучать он должен как вчера."""
+    settings = config.Settings(
+        wake_word="джони", vosk_model_path="p", response_mode="voice",
+        whisper_model="medium", whisper_device="cpu",
+    )
+    assert settings.streaming is False
+    assert settings.streaming_fillers == []
+
+
+def test_streaming_settings_are_read_from_yaml(tmp_path):
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "streaming: true\n"
+        "streaming_first_chunk: 90\n"
+        "streaming_fillers:\n"
+        "  - Секунду\n"
+        "  - Момент\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.streaming is True
+    assert loaded.settings.streaming_first_chunk == 90
+    assert loaded.settings.streaming_fillers == ["Секунду", "Момент"]
+
+
+def test_fillers_longer_than_the_cache_limit_are_dropped(tmp_path):
+    """Филлер длиннее MAX_CACHED_CHARS не кешируется и синтезируется каждый
+    раз — то есть сам становится задержкой, которую призван скрыть."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "streaming_fillers:\n"
+        "  - Секунду\n"
+        f"  - {'очень длинная фраза ' * 5}\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.streaming_fillers == ["Секунду"]
