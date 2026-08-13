@@ -267,4 +267,15 @@ def interpret_streamed(text, commands, stream_provider, speak_stream, memory_blo
     if result.broken and not result.spoken:
         # Оборвалось до первого слова — то же самое, что не ответить вовсе.
         return None
-    return _parse(raw, "groq", commands, spoken=result.spoken)
+    # result.spoken значит лишь «конвейер что-то произнёс по ходу потока» — а
+    # это может быть вводная фраза-проза ПЕРЕД JSON (модель иногда предваряет
+    # команду словами вроде «Конечно, сейчас посмотрю»). say_stream, встретив
+    # «{», защёлкивает командную ветку и дальше молчит до конца потока (см.
+    # looks_like_command в say_stream.py) — значит сам JSON, а вместе с ним и
+    # "reply" внутри него, вслух НЕ звучал. Если raw разбирается как JSON,
+    # всё, что извлечёт _parse, взято из него и озвучено не было, поэтому
+    # spoken принудительно False — иначе _speak_reply в app.py примет
+    # прозвучавшую вводную фразу за сам ответ и промолчит там, где нужно
+    # договорить настоящий reply.
+    spoken = result.spoken and _extract_json(raw) is None
+    return _parse(raw, "groq", commands, spoken=spoken)

@@ -787,3 +787,65 @@ def test_unstreamed_reply_is_spoken(monkeypatch):
     answer = brain.BrainResult(routed=None, reply="Дела отлично", provider="groq", spoken=False)
     app._speak_reply(speaker, answer, cancel=None)
     assert said == ["Дела отлично"]
+
+
+# ── Развилка _streamed_answer ────────────────────────────────────────────────
+
+
+def test_streamed_answer_skipped_when_strong_brain_first(monkeypatch):
+    """strong_brain_first=True значит «сильная модель — ОСНОВНОЙ мозг» (см.
+    make_providers). Стриминг умеет звать только Groq и никогда не зовёт
+    make_providers — если бы конвейер молча подключался поверх этой
+    настройки, Opus/GPT переставала бы видеть фразу первой, хотя владелец
+    явно включил её как основную. Ключ Groq и say_stream у спикера НАРОЧНО
+    присутствуют — падать конвейер обязан именно из-за strong_brain_first,
+    а не из-за отсутствия остальных условий."""
+    settings = Settings(
+        "джони", "", "off", "medium", "cuda", streaming=True, strong_brain_first=True
+    )
+    config = Config(apps={}, commands=[], settings=settings, secrets={"groq_api_key": "k"})
+    speaker = types.SimpleNamespace(say_stream=lambda chunks, cancel=None: None)
+    result = app._streamed_answer("привет", config, speaker, "", None)
+    assert result is None
+
+
+def test_brain_fallback_uses_streaming_pipeline_when_enabled(monkeypatch):
+    """Развилка _streamed_answer сегодня не покрыта ни одним тестом: в
+    остальных тестах app.py секреты пусты, поэтому первое же условие (ключ
+    Groq) обрывает функцию раньше, чем настройка streaming вообще читается —
+    опечатка вроде getattr(config.settings, "streming", ...) прошла бы весь
+    набор незамеченной. Гоняем _brain_fallback с ключом Groq в секретах,
+    streaming=True и подставным say_stream и проверяем, что ответ дал именно
+    конвейер (interpret/make_providers звать не должен)."""
+    calls = []
+
+    def fake_say_stream(chunks, cancel=None):
+        calls.append(list(chunks))
+        return brain.say_stream.StreamResult(text="Дела отлично", spoken=True)
+
+    said = []
+    speaker = types.SimpleNamespace(
+        say=lambda text: said.append(text),
+        say_stream=fake_say_stream,
+        play_answer=lambda: False,
+    )
+    settings = Settings("джони", "", "off", "medium", "cuda", streaming=True)
+    config = Config(apps={}, commands=[], settings=settings, secrets={"groq_api_key": "k"})
+    monkeypatch.setattr(
+        app, "make_streaming_provider",
+        lambda api_key, model: (lambda prompt: iter(["Дела отлично"])),
+    )
+
+    def boom(*args, **kwargs):
+        raise AssertionError("обычный interpret не должен звать — конвейер уже ответил")
+
+    monkeypatch.setattr(app, "interpret", boom)
+
+    def not_understood(message, via):
+        raise AssertionError(f"конвейер должен был дать ответ, а не {via!r}")
+
+    outcome = app._brain_fallback("как дела", config, speaker, True, None, not_understood)
+    assert calls, "say_stream не был вызван — конвейер не использовался"
+    assert outcome.via == "groq"
+    # spoken=True у StreamResult -> _speak_reply обязан промолчать.
+    assert said == []

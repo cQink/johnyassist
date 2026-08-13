@@ -163,6 +163,13 @@ def _streamed_answer(text, config, speaker, memory_block, cancel):
     api_key = (config.secrets or {}).get("groq_api_key")
     if not api_key or not getattr(config.settings, "streaming", False):
         return None
+    if getattr(config.settings, "strong_brain_first", False):
+        # Стриминг трогает только Groq (см. спеку) — при strong_brain_first
+        # сильная модель (Opus/GPT) должна стоять ВО ГЛАВЕ цепочки и видеть
+        # фразу первой. Конвейер вызывает только Groq и never make_providers,
+        # так что молчаливое включение стриминга тут понизило бы её до
+        # запасной, хотя владелец явно поставил её основной.
+        return None
     if getattr(speaker, "say_stream", None) is None:
         return None
     provider = make_streaming_provider(api_key, config.settings.groq_model)

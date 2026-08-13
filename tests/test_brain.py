@@ -442,6 +442,26 @@ def test_streamed_json_is_parsed_exactly_like_the_ordinary_path(sample_commands)
     assert result.routed.action == "system"
 
 
+def test_streamed_prose_before_json_reply_is_not_marked_spoken():
+    """Модель иногда предваряет JSON прозой («Конечно, сейчас посмотрю.»,
+    см. спеку). say_stream озвучивает эту вводную фразу и ставит
+    result.spoken=True, но сам JSON (а значит и "reply" внутри него) он
+    защёлкивает молча, встретив «{» — реального ответа человек ещё не
+    слышал. Если result.spoken протащить в _parse как есть, reply из JSON
+    унаследует чужое "прозвучало", _speak_reply в app.py его пропустит, и
+    человек услышит только вводную фразу и тишину вместо настоящего
+    ответа."""
+    def speak(chunks):
+        return brain.say_stream.StreamResult(
+            text='Конечно, сейчас посмотрю. {"action": "answer", "reply": "Настоящий ответ"}',
+            spoken=True,
+        )
+
+    result = brain.interpret_streamed("расскажи анекдот", [], lambda prompt: iter([]), speak)
+    assert result.reply == "Настоящий ответ"
+    assert result.spoken is False
+
+
 def test_streamed_returns_none_when_the_pipeline_is_unavailable():
     """None от say_stream значит «конвейера нет» — зовущий обязан уйти на
     обычный interpret, а не замолчать."""
