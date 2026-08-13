@@ -96,6 +96,15 @@ def _short_fillers(raw) -> list[str]:
     (а с ним sounds и requests) ради одной константы дороже, чем этот комментарий.
     """
     limit = 40
+    # Обработка случая, когда пришла одиночная строка вместо списка: если в YAML
+    # забыли дефис у списка (написали "streaming_fillers: Секунду" вместо
+    # "streaming_fillers:\n  - Секунду"), yaml.safe_load вернёт строку, а не
+    # список. Трактуем одиночную строку как список из одного элемента; остальные
+    # не-списки (число, словарь) даём как пустой список без исключения.
+    if isinstance(raw, str):
+        raw = [raw]
+    elif not isinstance(raw, (list, tuple)):
+        raw = []
     return [str(phrase).strip() for phrase in raw if 0 < len(str(phrase).strip()) <= limit]
 
 

@@ -235,3 +235,93 @@ def test_fillers_longer_than_the_cache_limit_are_dropped(tmp_path):
     )
     loaded = config.load_config(tmp_path)
     assert loaded.settings.streaming_fillers == ["Секунду"]
+
+
+def test_single_string_filler_instead_of_list_is_treated_as_one_filler(tmp_path):
+    """Если в YAML забыли дефис у списка («streaming_fillers: Секунду» вместо
+    «streaming_fillers:\n  - Секунду»), yaml.safe_load вернёт строку, а не
+    список. Без обработки строка разбивается на отдельные буквы и получается
+    семь однобуквенных филлеров, которые Джони произносит вслух.
+
+    Правка: одиночную строку трактуем как список из одного филлера."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "streaming_fillers: Секунду\n",  # Забыли дефис: это строка, а не список
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    # Должен быть ОДИН филлер, а не семь букв
+    assert loaded.settings.streaming_fillers == ["Секунду"]
+    assert len(loaded.settings.streaming_fillers) == 1
+
+
+def test_non_list_non_string_filler_value_gives_empty_list(tmp_path):
+    """Если в YAML ошибка и пришло что-то совсем неподходящее (например число),
+    конфиг не должен упасть при старте. Пустой список филлеров — это законное
+    состояние (филлеров нет), а падение из-за опечатки в необязательной
+    настройке несоразмерно.
+
+    Правка: не-списки и не-строки обрабатываются как пустой список."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "streaming_fillers: 123\n",  # Явная ошибка: число вместо строки/списка
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    # Не падаем, просто даём пустой список
+    assert loaded.settings.streaming_fillers == []
+
+
+def test_git_workdir_is_read_from_settings_yaml(tmp_path):
+    """Значение git_workdir из settings.yaml должно доезжать до Settings.git_workdir.
+
+    В прошлом коммите было добавлено чтение этого параметра (git_workdir=s.get(...)).
+    Эта правка решает проблему: git-команды выполнялись бы в каталоге запуска
+    Джони и рассказывали бы про ЧУЖОЙ репозиторий, а человек бы этого не заметил.
+    Теперь настройка работает.
+    """
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        'git_workdir: "D:/ssistent/3/johnyassist"\n',
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.git_workdir == "D:/ssistent/3/johnyassist"
+
+
+def test_git_workdir_defaults_to_empty_string_when_missing(tmp_path):
+    """Если git_workdir не указан в YAML, настройка должна быть пустой строкой.
+
+    Пустая строка здесь — правильное значение по умолчанию: она выключает
+    git-команды, и они не ошибаются молча, выполняясь в чужом репозитории.
+    """
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.git_workdir == ""
