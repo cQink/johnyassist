@@ -1,3 +1,6 @@
+import types
+
+from johnny import app, brain
 from johnny.app import handle_command
 from johnny.config import Config, Settings, CommandRule
 
@@ -755,3 +758,32 @@ def test_forget_and_update_fact_are_spoken_not_chimed(monkeypatch):
         handle_command(phrase, config, sp)
         assert sp.said == [message], action
         assert sp.answer_calls == 0, f"{action} не должен даже пытаться играть звук"
+
+
+# ── Сторож против двойной озвучки (_speak_reply) ────────────────────────────
+
+
+def test_streamed_reply_is_not_spoken_twice(monkeypatch):
+    """Сторож интеграции: reply, уже прозвучавший в конвейере, app обязан
+    пропустить молча."""
+    said = []
+    speaker = types.SimpleNamespace(
+        say=lambda text: said.append(text),
+        say_stream=lambda chunks, cancel=None: None,
+        play_answer=lambda: False,
+    )
+    answer = brain.BrainResult(routed=None, reply="Дела отлично", provider="groq", spoken=True)
+    app._speak_reply(speaker, answer, cancel=None)
+    assert said == []
+
+
+def test_unstreamed_reply_is_spoken(monkeypatch):
+    said = []
+    speaker = types.SimpleNamespace(
+        say=lambda text: said.append(text),
+        say_stream=lambda chunks, cancel=None: None,
+        play_answer=lambda: False,
+    )
+    answer = brain.BrainResult(routed=None, reply="Дела отлично", provider="groq", spoken=False)
+    app._speak_reply(speaker, answer, cancel=None)
+    assert said == ["Дела отлично"]

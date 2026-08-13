@@ -1,4 +1,6 @@
-from johnny import brain_claude
+import pytest
+
+from johnny import brain, brain_claude
 from johnny.brain import BrainResult, interpret, make_providers, punctuate
 from johnny.config import CommandRule, Config, Settings
 from johnny.router import RoutedAction
@@ -402,3 +404,61 @@ def test_prompt_tells_the_model_to_answer_questions_directly():
     from johnny.brain import _PROMPT
 
     assert "ПРОСТО ОТВЕТЬ НА ВОПРОС" in _PROMPT
+
+
+# ── Разговорная ветка через конвейер (interpret_streamed) ──────────────────
+
+
+@pytest.fixture
+def sample_commands():
+    """Независимый от CORRECTOR_COMMANDS набор: важно только, что «громкость
+    5» маршрутизируется в системное действие, а не какие у него аргументы."""
+    return [CommandRule("громкость *", "system", "volume_{0}")]
+
+
+def test_streamed_answer_is_marked_as_already_spoken():
+    """Главное в интеграции: реплику, прозвучавшую по ходу потока, нельзя
+    произнести второй раз — человек услышал бы её дважды."""
+    def speak(chunks):
+        return brain.say_stream.StreamResult(text="Дела отлично", spoken=True)
+
+    result = brain.interpret_streamed("как дела", [], lambda prompt: iter([]), speak)
+    assert result.reply == "Дела отлично"
+    assert result.spoken is True
+
+
+def test_streamed_json_is_parsed_exactly_like_the_ordinary_path(sample_commands):
+    """Командная ветка не озвучивается и разбирается тем же кодом: разойдясь,
+    два разбора начали бы понимать один и тот же JSON по-разному."""
+    def speak(chunks):
+        return brain.say_stream.StreamResult(
+            text='{"command": "громкость 5"}', spoken=False
+        )
+
+    result = brain.interpret_streamed("громкость пять", sample_commands,
+                                      lambda prompt: iter([]), speak)
+    assert result.spoken is False
+    assert result.routed is not None
+    assert result.routed.action == "system"
+
+
+def test_streamed_returns_none_when_the_pipeline_is_unavailable():
+    """None от say_stream значит «конвейера нет» — зовущий обязан уйти на
+    обычный interpret, а не замолчать."""
+    result = brain.interpret_streamed("как дела", [], lambda prompt: iter([]),
+                                      lambda chunks: None)
+    assert result is None
+
+
+def test_streamed_returns_none_when_nothing_was_said_and_stream_broke():
+    """Оборвалось до первого слова — пусть отвечает следующий провайдер."""
+    def speak(chunks):
+        return brain.say_stream.StreamResult(text="", spoken=False, broken=True)
+
+    assert brain.interpret_streamed("как дела", [], lambda p: iter([]), speak) is None
+
+
+def test_ordinary_interpret_still_reports_not_spoken():
+    """Старый путь обязан остаться прежним: его реплику озвучивает app."""
+    result = brain.interpret("привет", [], [("тест", lambda prompt: "Здравствуйте")])
+    assert result.spoken is False

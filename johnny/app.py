@@ -3,7 +3,8 @@ from dataclasses import dataclass, replace
 
 from . import chain, memory, panel_tools
 from .actions import execute
-from .brain import interpret, make_providers, punctuate
+from .brain import interpret, interpret_streamed, make_providers, punctuate
+from .brain_groq import make_streaming_provider
 from .browser_target import strip_tab_modifier
 from .config import load_config
 from .router import is_stop_word, route, route_exact
@@ -141,6 +142,37 @@ def _dispatch(routed, config, speaker, new_tab: bool = True, cancel=None) -> Out
 
 # ── Модель-корректор (Brain Fallback) ────────────────────────────────────────
 
+def _speak_reply(speaker, answer, cancel) -> None:
+    """Произнести реплику модели, если она ещё не прозвучала.
+
+    Сторож против двойной озвучки: в стриминге реплика звучит ПО ХОДУ потока,
+    и повторное say() дало бы человеку тот же ответ дважды.
+    """
+    if answer.spoken:
+        return
+    if cancel is None or not cancel.is_set():
+        speaker.say(answer.reply)
+
+
+def _streamed_answer(text, config, speaker, memory_block, cancel):
+    """Ответ через конвейер или None, если конвейер недоступен.
+
+    None здесь — нормальное состояние (выключен стриминг, не fish-голос, нет
+    ключа Groq), и зовущий просто идёт прежним путём.
+    """
+    api_key = (config.secrets or {}).get("groq_api_key")
+    if not api_key or not getattr(config.settings, "streaming", False):
+        return None
+    if getattr(speaker, "say_stream", None) is None:
+        return None
+    provider = make_streaming_provider(api_key, config.settings.groq_model)
+    return interpret_streamed(
+        text, config.commands, provider,
+        lambda chunks: speaker.say_stream(chunks, cancel=cancel),
+        memory_block=memory_block,
+    )
+
+
 def _brain_fallback(text, config, speaker, new_tab, cancel, not_understood):
     """Вызвать модель (Groq/Claude) для исправления нераспознанной команды.
 
@@ -151,7 +183,11 @@ def _brain_fallback(text, config, speaker, new_tab, cancel, not_understood):
     - не понять — тогда not_understood().
     """
     memory_block = memory.build_prompt_block(memory.recent_context(), memory.list_facts())
-    answer = interpret(text, config.commands, make_providers(config), memory_block=memory_block)
+    answer = _streamed_answer(text, config, speaker, memory_block, cancel)
+    if answer is None:
+        answer = interpret(
+            text, config.commands, make_providers(config), memory_block=memory_block
+        )
     if cancel is not None and cancel.is_set():
         # «Стоп» пришёл, пока модель думала (Groq/claude -p не прервать
         # на лету) — результат уже никому не нужен, ни говорить, ни
@@ -189,8 +225,12 @@ def _brain_fallback(text, config, speaker, new_tab, cancel, not_understood):
         )
         return Outcome(answer.provider or "модель")
     if answer.reply:
-        if cancel is None or not cancel.is_set():
-            speaker.say(answer.reply)
+        _speak_reply(speaker, answer, cancel)
+        return Outcome(answer.provider or "модель")
+    if answer.spoken:
+        # Поток отзвучал, но связного reply не осталось (например, оборвался
+        # в середине и уже сказал об этом сам). Говорить «Не понял команду»
+        # поверх этого — врать: Джони как раз ответил.
         return Outcome(answer.provider or "модель")
     # routed=None без reply — модель не поняла/не смогла исправить
     # ослышку. Раньше тут говорилось бодрое «Готово», хотя ничего

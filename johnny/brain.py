@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import brain_anthropic, brain_claude, brain_groq, brain_openai, chain
+from . import brain_anthropic, brain_claude, brain_groq, brain_openai, chain, say_stream
 from .http_client import warn_once
 from .router import RoutedAction, is_unsafe_action, route
 
@@ -96,6 +96,9 @@ class BrainResult:
     provider: str = field(default="", compare=False)
     # Цепочка шагов, если модель разложила фразу на несколько команд.
     steps: list[RoutedAction] | None = None
+    # Реплика уже прозвучала по ходу потока (стриминг) — зовущему её
+    # произносить НЕ НАДО, иначе человек услышит ответ дважды.
+    spoken: bool = field(default=False, compare=False)
 
 
 # Слот «сильной модели»: имя из settings.strong_brain -> модуль и ключ в
@@ -165,6 +168,58 @@ def make_providers(config) -> list[tuple[str, Callable[[str], str]]]:
     return providers
 
 
+def _build_prompt(text: str, commands, memory_block: str) -> str:
+    """Промпт для модели-корректора. Общий для обычного и потокового пути:
+    разойдясь, они начали бы спрашивать модель о разном."""
+    # Разрушительные команды (выключение/перезагрузка/сон) не показываем
+    # модели вовсе — их нельзя предлагать угадывать даже как «исправление».
+    safe_commands = [rule for rule in commands if not is_unsafe_action(rule.action, rule.template)]
+    listing = "\n".join(f"- {rule.pattern}" for rule in safe_commands)
+    return _PROMPT.format(
+        text=text, count=len(safe_commands), commands=listing, memory_block=memory_block
+    )
+
+
+def _parse(raw: str, name: str, commands, spoken: bool = False) -> BrainResult:
+    """Разбор ответа модели. Общий для обоих путей — по той же причине."""
+    data = _extract_json(raw)
+    if data is not None:
+        # Режим коррекции: модель узнала ослышку. Выполняет обычный route() —
+        # так модель не может изобрести действие или собрать кривой аргумент.
+        corrected = data.get("command")
+        if corrected:
+            routed = route(corrected, commands)
+            if routed is not None and is_unsafe_action(routed.action, routed.argument):
+                # «Исправление» указывает на разрушительное действие — выполнять
+                # нельзя, даже если модель сама это предложила.
+                routed = None
+            return BrainResult(routed=routed, reply=None, provider=name, spoken=spoken)
+        steps = data.get("steps")
+        if steps:
+            # Модель предлагает только ФРАЗЫ: список собирает chain.resolve
+            # через route_exact, поэтому изобрести действие или протащить
+            # опасную команду она не может.
+            return BrainResult(
+                routed=None, reply=None, provider=name, spoken=spoken,
+                steps=chain.resolve([str(step) for step in steps], commands),
+            )
+        action = data.get("action")
+        reply = data.get("reply") or None
+        if action in ("open_url", "launch_app", "system"):
+            argument = data.get("argument", "")
+            if is_unsafe_action(action, argument):
+                return BrainResult(routed=None, reply=None, provider=name, spoken=spoken)
+            routed = RoutedAction(action=action, argument=argument, via=name)
+            return BrainResult(routed=routed, reply=reply, provider=name, spoken=spoken)
+        if action == "answer":
+            return BrainResult(routed=None, reply=reply, provider=name, spoken=spoken)
+        # Валидный JSON, но ни одной из ожидаемых форм ("command"/action) —
+        # озвучивать сырой JSON нельзя, app.py скажет «Не понял команду».
+        return BrainResult(routed=None, reply=None, provider=name, spoken=spoken)
+    # Не JSON — значит это обычный разговорный ответ, озвучиваем его как есть.
+    return BrainResult(routed=None, reply=raw.strip(), provider=name, spoken=spoken)
+
+
 def interpret(
     text: str, commands=None, providers=None, memory_block: str = ""
 ) -> BrainResult | None:
@@ -178,13 +233,7 @@ def interpret(
     # providers=[] (в отличие от None) означает «нет ни одного провайдера» и
     # должен остаться пустым: `providers or [...]` не отличал бы пустой
     # список от None и молча уходил бы на живой claude -p.
-    # Разрушительные команды (выключение/перезагрузка/сон) не показываем
-    # модели вовсе — их нельзя предлагать угадывать даже как «исправление».
-    safe_commands = [rule for rule in commands if not is_unsafe_action(rule.action, rule.template)]
-    listing = "\n".join(f"- {rule.pattern}" for rule in safe_commands)
-    prompt = _PROMPT.format(
-        text=text, count=len(safe_commands), commands=listing, memory_block=memory_block
-    )
+    prompt = _build_prompt(text, commands, memory_block)
 
     raw, name = "", ""
     for name, provider in providers:
@@ -193,43 +242,29 @@ def interpret(
             break
     if not raw or not raw.strip():
         return None  # пусто у всех = моделей нет на связи
+    return _parse(raw, name, commands)
 
-    data = _extract_json(raw)
-    if data is not None:
-        # Режим коррекции: модель узнала ослышку. Выполняет обычный route() —
-        # так модель не может изобрести действие или собрать кривой аргумент.
-        corrected = data.get("command")
-        if corrected:
-            routed = route(corrected, commands)
-            if routed is not None and is_unsafe_action(routed.action, routed.argument):
-                # «Исправление» указывает на разрушительное действие — выполнять
-                # нельзя, даже если модель сама это предложила.
-                routed = None
-            return BrainResult(routed=routed, reply=None, provider=name)
-        steps = data.get("steps")
-        if steps:
-            # Модель предлагает только ФРАЗЫ: список собирает chain.resolve
-            # через route_exact, поэтому изобрести действие или протащить
-            # опасную команду она не может.
-            return BrainResult(
-                routed=None,
-                reply=None,
-                provider=name,
-                steps=chain.resolve([str(step) for step in steps], commands),
-            )
-        action = data.get("action")
-        reply = data.get("reply") or None
-        if action in ("open_url", "launch_app", "system"):
-            argument = data.get("argument", "")
-            if is_unsafe_action(action, argument):
-                return BrainResult(routed=None, reply=None, provider=name)
-            routed = RoutedAction(action=action, argument=argument, via=name)
-            return BrainResult(routed=routed, reply=reply, provider=name)
-        if action == "answer":
-            return BrainResult(routed=None, reply=reply, provider=name)
-        # Валидный JSON, но ни одной из ожидаемых форм ("command"/action) —
-        # озвучивать сырой JSON нельзя, app.py скажет «Не понял команду».
-        return BrainResult(routed=None, reply=None, provider=name)
 
-    # Не JSON — значит это обычный разговорный ответ, озвучиваем его как есть.
-    return BrainResult(routed=None, reply=raw.strip(), provider=name)
+def interpret_streamed(text, commands, stream_provider, speak_stream, memory_block: str = ""):
+    """Как interpret, но текст идёт потоком и разговорный ответ звучит по ходу.
+
+    speak_stream(chunks) -> say_stream.StreamResult | None. None означает «на
+    этом голосе конвейера нет» — зовущий обязан уйти на обычный interpret, а не
+    замолчать.
+
+    Разбор ответа делает тот же _parse, что и обычный путь: разойдясь, два
+    разбора со временем начали бы понимать один и тот же JSON по-разному.
+    """
+    commands = commands or []
+    prompt = _build_prompt(text, commands, memory_block)
+    result = speak_stream(stream_provider(prompt))
+    if result is None:
+        return None
+    raw = (result.text or "").strip()
+    if not raw:
+        # Ни слова не пришло: пусть отвечает следующий провайдер обычным путём.
+        return None
+    if result.broken and not result.spoken:
+        # Оборвалось до первого слова — то же самое, что не ответить вовсе.
+        return None
+    return _parse(raw, "groq", commands, spoken=result.spoken)
