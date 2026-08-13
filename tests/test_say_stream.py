@@ -421,3 +421,77 @@ def test_play_failure_speaks_the_remainder_in_order():
     # прозвучали бы раньше, чем запасной голос доберётся до «Раз.».
     assert played == ["/tmp/Раз..mp3"]
     assert fallback_calls == ["Раз. Два. Три."]
+
+
+def test_prepare_exception_is_treated_as_a_synthesis_failure():
+    """Сетевой сбой Fish (обрыв, таймаут) — ОБЫЧНЫЙ способ отказа синтеза, не
+    аномалия сверх контракта Voice. Если consume() не приравнивает исключение
+    из prepare() к уже существующему пути отказа (Prepared(path=None), от
+    которого play() как раз защищён), synth_loop умирает прямо на вызове,
+    конец очереди в `audio` никогда не уходит, и player.join() — а с ним и
+    сам consume() — висит навсегда. Гоняем consume() в отдельном потоке
+    именно поэтому: тест обязан завершиться сам, а не повиснуть вместе с ней.
+    """
+    def prepare(text):
+        raise RuntimeError("сеть пропала")
+
+    def play(path):
+        raise AssertionError("играть нечего — синтез должен был отказать")
+
+    fallback_calls = []
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=fallback_calls.append)
+
+    result_box = []
+
+    def run():
+        result_box.append(
+            say_stream.consume(
+                iter(["Раз. ", "Два."]), voice, fillers=say_stream.Fillers([])
+            )
+        )
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive(), "consume() зависла на исключении из voice.prepare()"
+    assert result_box, "consume() не успела вернуть результат за отведённое время"
+    assert result_box[0].spoken is True
+    assert fallback_calls == ["Раз. Два."]
+
+
+def test_filler_playback_failure_does_not_demote_the_answer():
+    """Филлер едет по той же очереди, что и фразы ответа, и почти всегда
+    играет из кеша — битый файл кеша это обычно именно он. Без метки на
+    элементе очереди сбой ЕГО проигрывания защёлкивает деградацию (весь
+    ответ уходит запасному голосу) и подмешивает ТЕКСТ ФИЛЛЕРА в остаток:
+    человек слышит «Секунду Раз. Два. Три.» чужим голосом вместо нормального
+    ответа своим. Проверяем оба симптома разом: пустой fallback (текста
+    филлера в нём нет и деградации не было) и то, что все три фразы ответа
+    действительно дошли до voice.play (а не осели в leftover).
+    """
+    played = []
+
+    def prepare(text):
+        return types.SimpleNamespace(
+            path=f"/tmp/{text}.mp3",
+            temporary=(text != "Секунду"),
+            from_cache=(text == "Секунду"),
+        )
+
+    def play(path):
+        played.append(path)
+        if path == "/tmp/Секунду.mp3":
+            raise RuntimeError("файл битый")
+
+    fallback_calls = []
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=fallback_calls.append)
+    result = say_stream.consume(
+        iter(["Раз. ", "Два. ", "Три."]),
+        voice, fillers=say_stream.Fillers(["Секунду"]),
+    )
+    assert result.spoken is True
+    assert fallback_calls == []
+    assert played == [
+        "/tmp/Секунду.mp3", "/tmp/Раз..mp3", "/tmp/Два..mp3", "/tmp/Три..mp3",
+    ]

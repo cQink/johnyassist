@@ -89,6 +89,17 @@ _QUEUE_LIMIT = 3
 _BROKEN_PHRASE = "Связь оборвалась, договорить не могу"
 
 
+class _FillerText(str):
+    """Строка-филлер: та же фраза, но помеченная для play_loop.
+
+    Ведёт себя как обычная str (конкатенация, .strip(), " ".join — всё
+    работает без изменений), но isinstance-проверка внизу отличает её от
+    фраз ответа. Нужна ровно для одного решения: сбой ПРОИГРЫВАНИЯ филлера
+    не должен ни попасть текстом в остаток, ни защёлкнуть общую деградацию
+    — филлер лишь слово-заглушка перед ответом, а не часть самого ответа.
+    """
+
+
 @dataclass
 class StreamResult:
     """Чем кончился конвейер.
@@ -158,8 +169,18 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
                 # порядок фраз в остатке гарантированно не перемешается.
                 audio.put((text, None))
                 continue
-            prepared = voice.prepare(text)
-            if prepared.path is None:
+            try:
+                prepared = voice.prepare(text)
+            except Exception:
+                # Контракт Voice обещает Prepared(path=None) при неудаче
+                # синтеза, но сетевой сбой (обрыв, таймаут Fish) — обычный
+                # СПОСОБ этой неудачи, а не аномалия сверх контракта.
+                # Приравниваем исключение к уже существующему пути отказа:
+                # без этого поток синтеза здесь же и умирает, конец очереди
+                # в `audio` никогда не уходит, и player.join() (а с ним и
+                # весь consume()) висит навсегда.
+                prepared = None
+            if prepared is None or prepared.path is None:
                 degraded.set()
                 audio.put((text, None))
                 continue
@@ -191,6 +212,7 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
             if item is None:
                 return
             text, prepared = item
+            is_filler = isinstance(text, _FillerText)
             if _stopped(cancel):
                 # Файл уже засинтезирован (Fish за него заплачен), но
                 # проигрывать его не будем — «стоп» отменяет и это тоже. Не
@@ -208,14 +230,25 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
             try:
                 voice.play(prepared.path)
             except Exception:
-                # Проигрывание отвалилось — эту фразу и остаток договорит
-                # запасной голос, как и при отказе синтеза. `degraded.set()`
-                # не влияет на решения ЭТОГО потока (см. play_broken выше),
-                # только сообщает synth_loop, что дальше готовить фразы,
-                # которые всё равно уйдут в leftover, незачем.
-                leftover.append(text)
-                play_broken = True
-                degraded.set()
+                if is_filler:
+                    # Филлер едет по той же очереди, что и фразы ответа, но
+                    # он не часть ответа, а слово-заглушка перед ним. Сбой
+                    # ЕГО проигрывания (а филлеры почти всегда играют из
+                    # кеша — битый файл кеша это как раз он) не должен ни
+                    # добавить текст филлера в остаток (иначе запасной
+                    # голос произнесёт «Секунду» вместе с ответом), ни
+                    # защёлкнуть деградацию (иначе весь ответ вслед за
+                    # филлером уедет на запасной голос без своей вины).
+                    pass
+                else:
+                    # Проигрывание отвалилось — эту фразу и остаток договорит
+                    # запасной голос, как и при отказе синтеза. `degraded.set()`
+                    # не влияет на решения ЭТОГО потока (см. play_broken выше),
+                    # только сообщает synth_loop, что дальше готовить фразы,
+                    # которые всё равно уйдут в leftover, незачем.
+                    leftover.append(text)
+                    play_broken = True
+                    degraded.set()
                 if getattr(prepared, "from_cache", False):
                     # Как и в tts_cache._play_prepared: файл из кеша сам
                     # оказался битым. Если его не убрать, филлер (кеш —
@@ -259,7 +292,7 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
                     if not command_branch:
                         filler = fillers.pick()
                         if filler:
-                            phrases.put(filler)
+                            phrases.put(_FillerText(filler))
                 if command_branch:
                     # Командная ветка: копим молча до конца, озвучивать нечего.
                     continue
