@@ -4,6 +4,9 @@
 ответа и никакого стриминга не получается.
 """
 
+import threading
+import types
+
 import johnny.say_stream as say_stream
 
 
@@ -105,12 +108,6 @@ def test_empty_list_means_no_filler():
     assert say_stream.Fillers([]).pick() == ""
 
 
-import threading
-import types
-
-import pytest
-
-
 def _voice(fail_after=None):
     """Подставной голос: помнит, что синтезировали и что играли."""
     state = types.SimpleNamespace(prepared=[], played=[], fallback=[])
@@ -181,7 +178,6 @@ def test_next_phrase_is_synthesised_while_the_previous_one_plays():
     """Ядро всей затеи. Если синтез ждёт конца проигрывания, пауза между
     фразами равна времени синтеза и выигрыш исчезает на второй же фразе."""
     order = []
-    playing = threading.Event()
 
     def prepare(text):
         order.append(f"синтез:{text}")
@@ -189,7 +185,6 @@ def test_next_phrase_is_synthesised_while_the_previous_one_plays():
 
     def play(path):
         order.append(f"играю:{path}")
-        playing.set()
         # Держим «проигрывание», пока синтез второй фразы не успеет начаться.
         import time
         time.sleep(0.15)
@@ -284,6 +279,10 @@ def test_stop_mid_stream_cleans_up_already_synthesised_files(tmp_path):
     cancel = threading.Event()
     made = []
     second_ready = threading.Event()
+    # exception внутри play() (например AssertionError) конвейер тихо
+    # проглотил бы как обычный сбой проигрывания — проверять таймаут нужно
+    # здесь, в основном потоке теста, а не внутри play().
+    second_ready_in_time = []
 
     def prepare(text):
         path = tmp_path / f"{text}.mp3"
@@ -297,7 +296,7 @@ def test_stop_mid_stream_cleans_up_already_synthesised_files(tmp_path):
         if path.endswith("Раз..mp3"):
             # Ждём, пока «Два.» точно засинтезируется и встанет в очередь на
             # проигрывание, и только тогда просим остановиться.
-            second_ready.wait(timeout=1)
+            second_ready_in_time.append(second_ready.wait(timeout=1))
             cancel.set()
 
     voice = say_stream.Voice(prepare=prepare, play=play, fallback=lambda text: None)
@@ -305,6 +304,9 @@ def test_stop_mid_stream_cleans_up_already_synthesised_files(tmp_path):
         iter(["Раз. ", "Два. ", "Три."]), voice,
         fillers=say_stream.Fillers([]), cancel=cancel,
     )
+    # Без этой проверки тест мог бы пройти вхолостую: истёк таймаут — «Два.»
+    # не подоспела, и утверждения ниже ничего не проверяют про очередь.
+    assert second_ready_in_time == [True], "«Два.» не успела засинтезироваться за 1с"
     assert made, "тест должен был что-то засинтезировать до стопа"
     assert all(not path.exists() for path in made)
 
@@ -316,3 +318,106 @@ def test_module_does_not_log_what_it_speaks():
     import inspect
 
     assert "logger" not in inspect.getsource(say_stream)
+
+
+def test_json_prefixed_by_prose_is_not_spoken_but_prose_is():
+    """Модель иногда отвечает «Хорошо. {"command": ...}»: решение «разговор»
+    принимается уже на восьмом знаке буфера («Хорошо. ») — задолго до
+    DECIDE_AFTER (40), — и looks_like_command(buffer[:40]) на этом коротком
+    начале ложно говорит «разговор». Без защиты на уровне ОТДЕЛЬНОЙ фразы
+    хвост с JSON ушёл бы в синтез, и Джони зачитал бы вслух
+    {"command": "громкость 5"} — то, чего не должно происходить никогда.
+    «Хорошо.» же безобидно и уместно как подтверждение — его озвучиваем."""
+    voice, state = _voice()
+    result = say_stream.consume(
+        iter(["Хорошо. ", '{"command": "громкость 5"}']),
+        voice, fillers=say_stream.Fillers([]),
+    )
+    assert result.spoken is True
+    assert state.prepared == ["Хорошо."]
+    assert state.played == ["/tmp/1.mp3"]
+
+
+def test_stream_stays_silent_after_a_suppressed_json_phrase():
+    """JSON может встретиться не в первой фразе решения, а посреди уже
+    «разговорной» ветки — и защёлкнуть командную ветку по ходу дела. Всё,
+    что придёт ПОСЛЕ этого (даже отдельным куском от Groq), обязано остаться
+    неозвученным — иначе часть текста вокруг JSON всё равно прорвётся наружу."""
+    voice, state = _voice()
+    say_stream.consume(
+        iter([
+            "Хорошо. ",
+            '{"command": "громкость 5"}.',
+            " И ещё что-то, что не должно прозвучать.",
+        ]),
+        voice, fillers=say_stream.Fillers([]),
+    )
+    # Единственное, что должно было уйти в синтез, — подтверждение до JSON.
+    assert state.prepared == ["Хорошо."]
+
+
+def test_result_text_keeps_the_json_even_when_nothing_is_spoken():
+    """result.text уходит вызывающему на разбор JSON-команды — там должно
+    быть ровно то, что не озвучили. Потерять кусок здесь значит потерять
+    саму команду, а не просто испортить голос."""
+    voice, state = _voice()
+    payload = '{"command": "громкость 5", "reason": "перепутал с прошлым"}'
+    result = say_stream.consume(
+        iter([payload]), voice, fillers=say_stream.Fillers([])
+    )
+    assert result.spoken is False
+    assert result.text == payload
+
+
+def test_play_failure_evicts_the_broken_cached_file(tmp_path):
+    """У филлеров и коротких служебных фраз Prepared.from_cache=True, а файл —
+    один и тот же на все ответы (в отличие от temporary=True). Если конвейер
+    смотрит только на `temporary` (как обычный, не стриминговый, путь в
+    tts_cache._play_prepared делает уже сейчас) и не удаляет битый файл из
+    кеша, эта фраза молчит одним и тем же обрывком НАВСЕГДА, до ручной
+    чистки models/tts-cache/."""
+    cached_path = tmp_path / "cached.mp3"
+    cached_path.write_bytes(b"broken")
+
+    def prepare(text):
+        return types.SimpleNamespace(path=str(cached_path), temporary=False, from_cache=True)
+
+    def play(path):
+        raise RuntimeError("файл битый")
+
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=lambda text: None)
+    say_stream.consume(
+        iter(["Секунду. "]), voice, fillers=say_stream.Fillers([])
+    )
+    assert not cached_path.exists()
+
+
+def test_play_failure_speaks_the_remainder_in_order():
+    """Комментарий в коде обещает, что запасной голос договорит «эту фразу и
+    остаток» — но если сбой проигрывания не защёлкивает деградацию (как это
+    уже делает сбой синтеза), вторая и третья фразы играют нормально, а
+    первая произносится запасным голосом ПОСЛЕ них: человек слышит
+    «Два. Три. ... Раз.» вместо «Раз. Два. Три.». Остаток обязан
+    договариваться одним куском И в правильном порядке."""
+    played = []
+
+    def prepare(text):
+        return types.SimpleNamespace(
+            path=f"/tmp/{text}.mp3", temporary=True, from_cache=False
+        )
+
+    def play(path):
+        played.append(path)
+        if "Раз" in path:
+            raise RuntimeError("устройство занято")
+
+    fallback_calls = []
+    voice = say_stream.Voice(prepare=prepare, play=play, fallback=fallback_calls.append)
+    result = say_stream.consume(
+        iter(["Раз. ", "Два. ", "Три."]), voice, fillers=say_stream.Fillers([])
+    )
+    assert result.spoken is True
+    # Ни «Два.», ни «Три.» не должны были даже пытаться играть — иначе они
+    # прозвучали бы раньше, чем запасной голос доберётся до «Раз.».
+    assert played == ["/tmp/Раз..mp3"]
+    assert fallback_calls == ["Раз. Два. Три."]

@@ -130,14 +130,20 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
     """
     phrases: queue.Queue = queue.Queue(maxsize=_QUEUE_LIMIT)
     audio: queue.Queue = queue.Queue(maxsize=_QUEUE_LIMIT)
-    # Фразы, до которых синтез не добрался из-за отказа Fish: их договорит
-    # запасной голос ОДНИМ куском, а не пофразно — иначе голос менялся бы
-    # туда-обратно на границах фраз, и это звучит как поломка.
+    # Фразы, до которых синтез не добрался из-за отказа Fish (или которые
+    # засинтезировались, но не смогли проиграться), договорит запасной голос
+    # ОДНИМ куском, а не пофразно — иначе голос менялся бы туда-обратно на
+    # границах фраз, и это звучит как поломка.
     leftover: list[str] = []
-    played_anything = threading.Event()
+    # Общий на оба потока: как только СИНТЕЗ или ПРОИГРЫВАНИЕ хоть раз
+    # отказали, дальше нет смысла ни платить Fish за новые фразы, ни пытаться
+    # играть уже готовые вперемешку с ещё не готовыми — human слышал бы
+    # «Два. Три. ... Раз.» вместо «Раз. Два. Три.». threading.Event потому что
+    # его читают и пишут оба потока, а флаг — не составное значение, гонки
+    # на нём безопасны.
+    degraded = threading.Event()
 
     def synth_loop():
-        degraded = False
         while True:
             text = phrases.get()
             if text is None:
@@ -145,21 +151,36 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
                 return
             if _stopped(cancel):
                 continue
-            if degraded:
-                leftover.append(text)
+            if degraded.is_set():
+                # Играть всё равно не будут — Fish платить не за что.
+                # Текст всё же передаём дальше по очереди (без файла), чтобы
+                # ЕДИНСТВЕННЫЙ поток, play_loop, решал судьбу leftover: так
+                # порядок фраз в остатке гарантированно не перемешается.
+                audio.put((text, None))
                 continue
             prepared = voice.prepare(text)
             if prepared.path is None:
-                degraded = True
-                leftover.append(text)
+                degraded.set()
+                audio.put((text, None))
                 continue
             # Текст едет вместе с файлом: если файл не проиграется, договорить
             # эту фразу запасным голосом можно, только зная её текст.
             audio.put((text, prepared))
 
     def play_loop():
+        # Своя, ЛОКАЛЬНАЯ для этого потока деградация — специально не через
+        # общий `degraded`. Тот факт, что синтез где-то дальше по потоку уже
+        # отказал (и выставил `degraded` для экономии на Fish), не значит, что
+        # фраза, которая доехала досюда УЖЕ готовой, вдруг не должна играть:
+        # `degraded` из play_loop читать нельзя — очередь `audio` асинхронна,
+        # и к моменту, когда мы дошли до готового файла, синтез мог уйти
+        # вперёд и успеть выставить флаг из-за СЛЕДУЮЩЕЙ фразы. Порядок и
+        # решение о каждой фразе — только по локальному состоянию, строго по
+        # очереди её обработки этим потоком.
+        play_broken = False
+
         def cleanup(prepared):
-            if getattr(prepared, "temporary", False):
+            if prepared is not None and getattr(prepared, "temporary", False):
                 try:
                     Path(prepared.path).unlink(missing_ok=True)
                 except OSError:
@@ -176,13 +197,34 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
                 # убрать файл здесь значит оставить mp3 в TEMP навсегда.
                 cleanup(prepared)
                 continue
+            if prepared is None or play_broken:
+                # Либо синтез этой фразы не удался, либо раньше по потоку
+                # (в этом же потоке, значит без гонки) отказало само
+                # проигрывание: остаток договаривает запасной голос одним
+                # куском, а не вразнобой.
+                leftover.append(text)
+                cleanup(prepared)
+                continue
             try:
                 voice.play(prepared.path)
-                played_anything.set()
             except Exception:
                 # Проигрывание отвалилось — эту фразу и остаток договорит
-                # запасной голос, как и при отказе синтеза.
+                # запасной голос, как и при отказе синтеза. `degraded.set()`
+                # не влияет на решения ЭТОГО потока (см. play_broken выше),
+                # только сообщает synth_loop, что дальше готовить фразы,
+                # которые всё равно уйдут в leftover, незачем.
                 leftover.append(text)
+                play_broken = True
+                degraded.set()
+                if getattr(prepared, "from_cache", False):
+                    # Как и в tts_cache._play_prepared: файл из кеша сам
+                    # оказался битым. Если его не убрать, филлер (кеш —
+                    # почти всегда он) молчит этим же файлом на КАЖДОМ
+                    # ответе до ручной чистки кеша.
+                    try:
+                        Path(prepared.path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
             finally:
                 cleanup(prepared)
 
@@ -200,54 +242,75 @@ def consume(chunks, voice, *, fillers, first_limit: int = 120, cancel=None) -> S
     sentences = 1
 
     try:
-        for piece in chunks:
-            if _stopped(cancel):
-                break
-            collected.append(piece)
-            buffer += piece
-            if not decided:
-                # Решаем один раз: набралось DECIDE_AFTER знаков или пришла
-                # первая законченная фраза — что раньше.
-                phrase, _ = cut(buffer, first_limit)
-                if len(buffer) < DECIDE_AFTER and not phrase:
-                    continue
-                decided = True
-                command_branch = looks_like_command(buffer[:DECIDE_AFTER])
-                if not command_branch:
-                    filler = fillers.pick()
-                    if filler:
-                        phrases.put(filler)
-            if command_branch:
-                # Командная ветка: копим молча до конца, озвучивать нечего.
-                continue
-            while True:
-                phrase, buffer = cut(buffer, first_limit, sentences)
-                if not phrase:
+        try:
+            for piece in chunks:
+                if _stopped(cancel):
                     break
-                phrases.put(phrase)
-                spoken = True
-                # Дальше первой фразы спешить некуда — Джони уже говорит, а
-                # каждый лишний вызов Fish это и деньги, и слышимая пауза.
-                sentences = 2
-    except StreamBroken:
-        broken = True
+                collected.append(piece)
+                buffer += piece
+                if not decided:
+                    # Решаем один раз: набралось DECIDE_AFTER знаков или пришла
+                    # первая законченная фраза — что раньше.
+                    phrase, _ = cut(buffer, first_limit)
+                    if len(buffer) < DECIDE_AFTER and not phrase:
+                        continue
+                    decided = True
+                    command_branch = looks_like_command(buffer[:DECIDE_AFTER])
+                    if not command_branch:
+                        filler = fillers.pick()
+                        if filler:
+                            phrases.put(filler)
+                if command_branch:
+                    # Командная ветка: копим молча до конца, озвучивать нечего.
+                    continue
+                while True:
+                    phrase, buffer = cut(buffer, first_limit, sentences)
+                    if not phrase:
+                        break
+                    if looks_like_command(phrase):
+                        # Решение «разговор» принято по НАЧАЛУ буфера — оно
+                        # могло опередить границу предложения (см. DECIDE_AFTER
+                        # выше) и не увидеть JSON, который приходит позже.
+                        # Проверяем КАЖДУЮ фразу отдельно: встретив JSON,
+                        # защёлкиваем командную ветку и дальше молчим до конца
+                        # потока, как будто решение с самого начала было верным.
+                        command_branch = True
+                        break
+                    phrases.put(phrase)
+                    spoken = True
+                    # Дальше первой фразы спешить некуда — Джони уже говорит, а
+                    # каждый лишний вызов Fish это и деньги, и слышимая пауза.
+                    sentences = 2
+        except StreamBroken:
+            broken = True
 
-    if not decided and buffer.strip():
-        # Поток кончился, а решения так и не было: ответ оказался короче
-        # DECIDE_AFTER и без единой точки. Ровно так выглядит короткий JSON
-        # ({"command": "громкость 5"} — 26 знаков), поэтому решить ОБЯЗАНЫ и
-        # здесь. Без этой ветки хвост уходил бы в озвучку, и Джони зачитывал
-        # бы вслух JSON — то, против чего стоит сторож №1 в спеке.
-        decided = True
-        command_branch = looks_like_command(buffer[:DECIDE_AFTER])
+        if not decided and buffer.strip():
+            # Поток кончился, а решения так и не было: ответ оказался короче
+            # DECIDE_AFTER и без единой точки. Ровно так выглядит короткий JSON
+            # ({"command": "громкость 5"} — 26 знаков), поэтому решить ОБЯЗАНЫ и
+            # здесь. Без этой ветки хвост уходил бы в озвучку, и Джони зачитывал
+            # бы вслух JSON — то, против чего стоит сторож №1 в спеке.
+            decided = True
+            command_branch = looks_like_command(buffer[:DECIDE_AFTER])
 
-    if not command_branch and buffer.strip() and not _stopped(cancel):
-        phrases.put(buffer.strip())
-        spoken = True
+        if not command_branch and buffer.strip() and looks_like_command(buffer.strip()):
+            # Тот же сторож, что и внутри while-цикла: остаток без единой
+            # точки внутри (JSON без хвостового текста после него) никогда не
+            # проходит через cut() как отдельная фраза и добрался бы сюда
+            # непроверенным.
+            command_branch = True
 
-    phrases.put(None)
-    synth.join()
-    player.join()
+        if not command_branch and buffer.strip() and not _stopped(cancel):
+            phrases.put(buffer.strip())
+            spoken = True
+    finally:
+        # Сигнал завершения обязан уйти всегда, а не только когда всё выше
+        # прошло без исключений: иначе оба потока (synth и play) висят
+        # навсегда на queue.get(), а синтез продолжает тратить деньги на Fish
+        # уже после того, как consume() вышла с исключением.
+        phrases.put(None)
+        synth.join()
+        player.join()
 
     text = "".join(collected)
     if _stopped(cancel):
