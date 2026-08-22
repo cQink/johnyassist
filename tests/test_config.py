@@ -60,7 +60,7 @@ def test_new_settings_have_defaults(tmp_path):
     cfg = load_config(_write_configs(tmp_path))
     assert cfg.settings.tts_provider == "fish"
     assert cfg.settings.fish_model_id == ""
-    assert cfg.settings.groq_model == "llama-3.3-70b-versatile"
+    assert cfg.settings.groq_model == "openai/gpt-oss-120b"
     # Сильная модель по умолчанию выключена: она стоит денег, и включать её
     # обновлением проекта нельзя.
     assert cfg.settings.strong_brain == ""
@@ -393,3 +393,25 @@ def test_пороги_gpu_guard_по_умолчанию_когда_значен�
     loaded = config.load_config(tmp_path)
     assert loaded.settings.gpu_guard_low_mb == 2500
     assert loaded.settings.gpu_guard_high_mb == 4500
+
+
+def test_gpu_guard_ноль_не_превращается_в_значение_по_умолчанию(tmp_path):
+    """Находка 8 ревью: `int(s.get(...) or 2500)` считал бы 0 отсутствующим
+    значением наравне с None, хотя это разные вещи — 0 значит «уходить на
+    маленькую модель при любой занятой видеопамяти», а не «настройка не
+    задана». Различать их обязано именно `is None`."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "gpu_guard_low_mb: 0\n"
+        "gpu_guard_high_mb: 0\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.gpu_guard_low_mb == 0
+    assert loaded.settings.gpu_guard_high_mb == 0

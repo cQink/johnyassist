@@ -35,7 +35,7 @@ class Settings:
     tts_local_url: str = ""             # http://localhost:8765 (или LAN/VPS)
     tts_voice_id: str = ""              # id голоса в сервисе (по умолчанию сервисный)
     tts_style: str = ""                 # calm | confident | friendly (что умеет сервис)
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     # Сильная модель по API-ключу («доп мозг»): "" | opus | gpt. Пустая строка
     # по умолчанию — она стоит денег, и включать её должен человек. Ключ к ней
     # живёт в secrets.yaml отдельно: имя модели значит «хочу», ключ — «могу».
@@ -138,18 +138,22 @@ def load_config(config_dir) -> Config:
         whisper_model=s.get("whisper_model", "medium"),
         whisper_device=s.get("whisper_device", "cuda"),
         whisper_model_gaming=str(s.get("whisper_model_gaming", "") or ""),
-        # Пустое значение в YAML (gpu_guard_low_mb: без значения) даёт None,
-        # и без `or` загрузка конфига упадёт на int(None). Второй аргумент get()
-        # не подставляется, если ключ есть — только если ключа нет.
-        gpu_guard_low_mb=int(s.get("gpu_guard_low_mb") or 2500),
-        gpu_guard_high_mb=int(s.get("gpu_guard_high_mb") or 4500),
+        # Пустое значение в YAML (gpu_guard_low_mb: без значения) даёт None, и
+        # без запасного значения загрузка конфига упадёт на int(None). Второй
+        # аргумент get() не подставляется, если ключ есть, — только если ключа
+        # нет вовсе, поэтому здесь сравниваем явно с None, а не через `or`:
+        # `or` считал бы отсутствующим и 0, а 0 — валидный порог (см. тест
+        # test_none_и_ноль_свободной_памяти_это_разные_решения в
+        # test_game_watch.py — там та же логика важна для free_mb).
+        gpu_guard_low_mb=int(2500 if s.get("gpu_guard_low_mb") is None else s.get("gpu_guard_low_mb")),
+        gpu_guard_high_mb=int(4500 if s.get("gpu_guard_high_mb") is None else s.get("gpu_guard_high_mb")),
         tts_voice=s.get("tts_voice", "ru-RU-DmitryNeural"),
         tts_provider=s.get("tts_provider", "fish"),
         fish_model_id=s.get("fish_model_id", ""),
         tts_local_url=s.get("tts_local_url", ""),
         tts_voice_id=s.get("tts_voice_id", ""),
         tts_style=s.get("tts_style", ""),
-        groq_model=s.get("groq_model", "llama-3.3-70b-versatile"),
+        groq_model=s.get("groq_model", "openai/gpt-oss-120b"),
         strong_brain=s.get("strong_brain", ""),
         strong_brain_model=s.get("strong_brain_model", ""),
         strong_brain_base_url=s.get("strong_brain_base_url", ""),
