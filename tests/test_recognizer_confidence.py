@@ -1,3 +1,5 @@
+import threading
+
 import johnny.recognizer as recognizer_module
 from johnny.recognizer import Recognizer
 
@@ -21,6 +23,7 @@ def _recognizer(segments):
     recognizer._model = FakeModel(segments)
     recognizer._prompt = "Джони. Русские голосовые команды."
     recognizer.last_confidence = 0.0
+    recognizer._lock = threading.RLock()          # transcribe берёт его на время работы
     return recognizer
 
 

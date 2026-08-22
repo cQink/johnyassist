@@ -1,8 +1,10 @@
+import gc
 import glob
 import logging
 import os
 import re
 import sys
+import threading
 
 
 def _enable_cuda_dlls() -> None:
@@ -186,13 +188,27 @@ class Recognizer:
         # историю: порог отсечения выбирается по накопленным данным, а не
         # угадывается заранее.
         self.last_confidence = 0.0
+        # Замок общий у расшифровки и подмены модели: transcribe работает в
+        # потоке контроллера, а use_model зовут из потока сторожа. RLock, а не
+        # Lock, чтобы вложенный вызов внутри одного потока не встал намертво.
+        self._lock = threading.RLock()
+        self._device = device
+        self.model_name = model
+        self._model = None
 
         if WhisperModel is None:
-            self._model = None
             logger.warning("faster-whisper недоступен, распознавание будет отключено: %s", _WHISPER_IMPORT_ERROR)
             return
 
-        preferred_compute_types: list[tuple[str, str]] = []
+        self._model = self._load(model, device)
+
+    def _load(self, model: str, device: str):
+        """Поднять модель, спускаясь по лесенке до первого рабочего режима.
+
+        Возвращает модель или None. Лесенка нужна потому, что доступность
+        режима зависит от машины: на карте без float16 просьба о нём падает, а
+        человек всё равно должен быть услышан — пусть и на процессоре.
+        """
         if device == "cuda":
             preferred_compute_types = [
                 ("cuda", "float16"),
@@ -206,23 +222,14 @@ class Recognizer:
                 ("cpu", "float32"),
             ]
 
-        self._model = None
         last_error: Exception | None = None
         for target_device, compute_type in preferred_compute_types:
             try:
-                self._model = WhisperModel(
+                loaded = WhisperModel(
                     model,
                     device=target_device,
                     compute_type=compute_type,
                 )
-                if target_device != device or compute_type != ("float16" if device == "cuda" else "int8"):
-                    logger.warning(
-                        "Whisper-модель %r инициализирована в fallback-режиме %s/%s",
-                        model,
-                        target_device,
-                        compute_type,
-                    )
-                break
             except Exception as exc:  # pragma: no cover - environment-dependent
                 last_error = exc
                 logger.warning(
@@ -232,11 +239,50 @@ class Recognizer:
                     compute_type,
                     exc,
                 )
-        if self._model is None:
-            logger.warning(
-                "Whisper не смог загрузиться ни в одном режиме: %s",
-                last_error,
-            )
+                continue
+            if target_device != device or compute_type != ("float16" if device == "cuda" else "int8"):
+                logger.warning(
+                    "Whisper-модель %r инициализирована в fallback-режиме %s/%s",
+                    model,
+                    target_device,
+                    compute_type,
+                )
+            return loaded
+
+        logger.warning("Whisper не смог загрузиться ни в одном режиме: %s", last_error)
+        return None
+
+    def use_model(self, model: str) -> bool:
+        """Сменить модель Whisper на ходу. True — сменили, False — оставили как было.
+
+        Зачем: medium на видеокарте занимает 2138 МБ, small — 648 МБ (замер
+        2026-08-22 на RTX 3070). На время игры разницу отдаём игре.
+
+        Замок держим на всю подмену: она занимает около 2.4 секунды, и если
+        выдернуть модель из-под работающего transcribe, команда пропадёт.
+        """
+        with self._lock:
+            if model == self.model_name and self._model is not None:
+                return False
+
+            previous_name = self.model_name
+            # Старую отпускаем ДО загрузки новой. Иначе на карте полежат обе,
+            # и подмена, затеянная ради экономии памяти, её же и не даст.
+            self._model = None
+            gc.collect()
+
+            loaded = self._load(model, self._device)
+            if loaded is None:
+                logger.warning(
+                    "Модель %r не поднялась — возвращаюсь на %r", model, previous_name
+                )
+                self._model = self._load(previous_name, self._device)
+                return False
+
+            self._model = loaded
+            self.model_name = model
+            logger.info("Whisper переключён на модель %r", model)
+            return True
 
     @property
     def available(self) -> bool:
@@ -247,21 +293,22 @@ class Recognizer:
         if self._model is None:
             return ""
 
-        segments, _ = self._model.transcribe(
-            audio,
-            language="ru",
-            vad_filter=True,
-            initial_prompt=self._prompt,
-            beam_size=5,
-            # Команды независимы — не тянем контекст прошлой фразы (убирает
-            # «залипания»/галлюцинации Whisper на коротких/тихих записях).
-            condition_on_previous_text=False,
-            # Мягче отбрасываем «нет речи» и даём температуре откатиться —
-            # меньше пустых/выдуманных результатов на шумных фрагментах.
-            no_speech_threshold=0.5,
-            temperature=[0.0, 0.2, 0.4, 0.6],
-        )
-        segments = list(segments)
+        with self._lock:
+            segments, _ = self._model.transcribe(
+                audio,
+                language="ru",
+                vad_filter=True,
+                initial_prompt=self._prompt,
+                beam_size=5,
+                # Команды независимы — не тянем контекст прошлой фразы (убирает
+                # «залипания»/галлюцинации Whisper на коротких/тихих записях).
+                condition_on_previous_text=False,
+                # Мягче отбрасываем «нет речи» и даём температуре откатиться —
+                # меньше пустых/выдуманных результатов на шумных фрагментах.
+                no_speech_threshold=0.5,
+                temperature=[0.0, 0.2, 0.4, 0.6],
+            )
+            segments = list(segments)
         self.last_confidence = min(
             (seg.avg_logprob for seg in segments), default=0.0
         )
