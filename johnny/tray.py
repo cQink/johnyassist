@@ -167,6 +167,8 @@ def main() -> None:
 
     def restart_app(_icon, _item) -> None:
         logging.info("Перезапуск по команде из трея")
+        guard.stop()  # иначе старый сторож может дёрнуть use_model в окне,
+        # пока новый Джони уже грузит модели на ту же карту
         controller.stop()
         stop_event.set()
         icon.stop()

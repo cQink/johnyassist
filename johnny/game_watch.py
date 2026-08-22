@@ -128,16 +128,32 @@ class Guard:
         осталась бы незамеченной до перезапуска Джони — а Whisper при этом
         навсегда застрял бы на той модели, что была в тот момент.
         """
+        if not self.enabled:
+            # Настройкой выключено — decide() и так вернёт нормальную модель,
+            # но не читаем признаки и не зовём use_model вовсе: незачем
+            # опрашивать реестр и nvidia-smi ради решения, которое заведомо
+            # ничего не поменяет.
+            return self._recognizer.model_name
+
         try:
             game = bool(self._game_running())
         except Exception:
             logger.warning("Не удалось прочитать признак игры", exc_info=True)
             game = False
-        try:
-            free = self._free_mb()
-        except Exception:
-            logger.warning("Не удалось прочитать свободную видеопамять", exc_info=True)
-            free = None
+
+        free = None
+        if not game:
+            # При идущей игре decide() смотрит только на game_running и до
+            # free_mb не доходит (первая же строка после проверки enabled).
+            # Не будим nvidia-smi ради значения, которое всё равно
+            # проигнорируют, — это подпроцесс с таймаутом 5 секунд, и звать
+            # его на каждом опросе ровно во время игры значило бы отбирать у
+            # неё ресурсы, которые сторож призван возвращать.
+            try:
+                free = self._free_mb()
+            except Exception:
+                logger.warning("Не удалось прочитать свободную видеопамять", exc_info=True)
+                free = None
 
         current = self._recognizer.model_name
         wanted = decide(
@@ -182,4 +198,12 @@ class Guard:
         )
 
     def stop(self) -> None:
+        """Остановить фоновый опрос.
+
+        Одноразовый: событие взводится и не сбрасывается, _thread не
+        обнуляется. Повторный start() после stop() тихо ничего не сделает
+        (см. проверку `self._thread is not None` в начале start()). Сейчас
+        никто сторож не перезапускает, поэтому это не чинится — но если
+        понадобится, перед новым start() нужно будет создать новый Guard или
+        явно сбросить _thread и _stop."""
         self._stop.set()

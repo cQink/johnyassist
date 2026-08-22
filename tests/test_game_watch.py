@@ -1,8 +1,10 @@
 """Решение «какую модель Whisper держать» — без видеокарты и без Steam."""
 import subprocess
+import threading
+import time
 import winreg
 
-from johnny.game_watch import decide, free_vram_mb, steam_game_running
+from johnny.game_watch import Guard, decide, free_vram_mb, steam_game_running
 
 БАЗА = dict(normal_model="medium", gaming_model="small", low_mb=2500, high_mb=4500)
 
@@ -170,8 +172,6 @@ def test_steam_game_running_ключа_нет(monkeypatch):
 
 # --- Guard: подмена модели в фоне ---
 
-from johnny.game_watch import Guard
-
 
 class ФальшивыйRecognizer:
     def __init__(self, model="medium"):
@@ -277,3 +277,163 @@ def test_недоступный_распознаватель_подменяет�
     assert wanted == "medium"
     assert recognizer.смены == ["medium"]
     assert recognizer.available is True
+
+
+def test_при_игре_видеопамять_не_опрашивается():
+    """Находка 1 ревью: decide() при game_running=True вообще не смотрит на
+    free_mb — первой же строкой возвращает gaming_model. Значит и звать
+    nvidia-smi (self._free_mb) в этом случае незачем: это подпроцесс с
+    таймаутом 5 секунд, отбирающий у игры и создание процесса, и опрос
+    драйвера — ровно в тот момент, ради которого сторож вообще существует."""
+    recognizer = ФальшивыйRecognizer()
+    вызовы_памяти = []
+
+    def память():
+        вызовы_памяти.append(1)
+        return 6000
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=lambda: True,
+        free_mb=память,
+    )
+
+    guard.tick()
+
+    assert вызовы_памяти == []
+
+
+def test_без_игры_видеопамять_по_прежнему_опрашивается():
+    """Симметричный к предыдущему: пропуск free_mb — это следствие того, что
+    decide() не смотрит на память именно при game_running=True, а не общая
+    экономия. Без игры признак по-прежнему нужен."""
+    recognizer = ФальшивыйRecognizer("small")
+    вызовы_памяти = []
+
+    def память():
+        вызовы_памяти.append(1)
+        return 6000
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=lambda: False,
+        free_mb=память,
+    )
+
+    guard.tick()
+
+    assert вызовы_памяти == [1]
+
+
+# --- Guard: enabled и жизненный цикл потока (start/stop) ---
+
+
+class ФальшивыеНастройкиВыключено:
+    whisper_model = "medium"
+    whisper_model_gaming = ""
+    gpu_guard_low_mb = 2500
+    gpu_guard_high_mb = 4500
+
+
+def test_выключенный_сторож_не_дёргает_tick():
+    """Находка 7 ревью: tick() публичный, и при пустой whisper_model_gaming
+    decide() и так вернёт normal_model — но по дороге tick() успевает
+    опросить оба признака и, если current не совпадает с normal_model,
+    позвать use_model. Выключенный сторож не должен трогать вообще ничего."""
+    recognizer = ФальшивыйRecognizer("small")  # current уже не normal_model
+    опрошено = []
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройкиВыключено(),
+        game_running=lambda: (опрошено.append("game"), False)[1],
+        free_mb=lambda: (опрошено.append("free"), 6000)[1],
+    )
+
+    wanted = guard.tick()
+
+    assert wanted == "small"  # вернул текущую модель, не тронул
+    assert recognizer.смены == []
+    assert опрошено == []
+
+
+def test_выключенный_сторож_не_запускает_поток():
+    """Явное требование задачи: пустая whisper_model_gaming вообще не должна
+    заводить фоновый поток опроса. Проверяем отсутствие потока, а не только
+    то, что признаки не читались, — иначе поток мог бы тихо крутиться и
+    ничего не делать, и это осталось бы незамеченным."""
+    recognizer = ФальшивыйRecognizer()
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройкиВыключено(),
+        game_running=lambda: False,
+        free_mb=lambda: 6000,
+        poll_seconds=0.01,
+    )
+
+    поток_до = threading.active_count()
+    guard.start()
+
+    assert guard._thread is None
+    # Число живых потоков в процессе не выросло — поток не просто не
+    # сохранён в _thread, а действительно не создавался.
+    assert threading.active_count() == поток_до
+
+
+def test_повторный_start_не_заводит_второй_поток():
+    recognizer = ФальшивыйRecognizer()
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=lambda: False,
+        free_mb=lambda: 6000,
+        poll_seconds=0.01,
+    )
+
+    guard.start()
+    первый_поток = guard._thread
+    guard.start()
+
+    assert guard._thread is первый_поток
+    guard.stop()
+    _дождаться(lambda: not первый_поток.is_alive())
+
+
+def _дождаться(условие, *, тайм_аут=2.0):
+    """Ждём условие опросом, а не фиксированным sleep — иначе тест либо
+    слишком долгий, либо изредка падает на медленной машине."""
+    предел = time.monotonic() + тайм_аут
+    while time.monotonic() < предел:
+        if условие():
+            return
+        time.sleep(0.005)
+    assert условие(), "условие не наступило за отведённое время"
+
+
+def test_stop_останавливает_цикл_опроса():
+    recognizer = ФальшивыйRecognizer()
+    счётчик = []
+
+    def игра():
+        счётчик.append(1)
+        return False
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=игра,
+        free_mb=lambda: 6000,
+        poll_seconds=0.01,
+    )
+
+    guard.start()
+    _дождаться(lambda: len(счётчик) >= 2)
+    guard.stop()
+    _дождаться(lambda: not guard._thread.is_alive())
+
+    число_на_момент_остановки = len(счётчик)
+    time.sleep(0.05)  # дать шанс потоку опросить снова, если stop не сработал
+
+    assert len(счётчик) == число_на_момент_остановки
