@@ -355,3 +355,41 @@ def test_игровая_модель_и_пороги_читаются_из_yaml(
     assert loaded.settings.whisper_model_gaming == "small"
     assert loaded.settings.gpu_guard_low_mb == 2500
     assert loaded.settings.gpu_guard_high_mb == 4500
+
+
+def test_пороги_gpu_guard_по_умолчанию_когда_ключей_нет(tmp_path):
+    """Если gpu_guard_low_mb и gpu_guard_high_mb не указаны в YAML, должны быть
+    значения по умолчанию 2500 и 4500."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.gpu_guard_low_mb == 2500
+    assert loaded.settings.gpu_guard_high_mb == 4500
+
+
+def test_пороги_gpu_guard_по_умолчанию_когда_значения_пусты(tmp_path):
+    """Если в YAML пустые значения (gpu_guard_low_mb: без значения), YAML вернёт
+    None. Без защиты int(None) бросит TypeError. Должны быть значения по умолчанию."""
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cpu\n"
+        "gpu_guard_low_mb:\n"
+        "gpu_guard_high_mb:\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.gpu_guard_low_mb == 2500
+    assert loaded.settings.gpu_guard_high_mb == 4500

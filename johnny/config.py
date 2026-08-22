@@ -138,8 +138,11 @@ def load_config(config_dir) -> Config:
         whisper_model=s.get("whisper_model", "medium"),
         whisper_device=s.get("whisper_device", "cuda"),
         whisper_model_gaming=str(s.get("whisper_model_gaming", "") or ""),
-        gpu_guard_low_mb=int(s.get("gpu_guard_low_mb", 2500)),
-        gpu_guard_high_mb=int(s.get("gpu_guard_high_mb", 4500)),
+        # Пустое значение в YAML (gpu_guard_low_mb: без значения) даёт None,
+        # и без `or` загрузка конфига упадёт на int(None). Второй аргумент get()
+        # не подставляется, если ключ есть — только если ключа нет.
+        gpu_guard_low_mb=int(s.get("gpu_guard_low_mb") or 2500),
+        gpu_guard_high_mb=int(s.get("gpu_guard_high_mb") or 4500),
         tts_voice=s.get("tts_voice", "ru-RU-DmitryNeural"),
         tts_provider=s.get("tts_provider", "fish"),
         fish_model_id=s.get("fish_model_id", ""),
