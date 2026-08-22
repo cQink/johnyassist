@@ -76,18 +76,32 @@ def test_cooldown_is_tracked_per_key(monkeypatch):
     assert http_client.in_cooldown("groq") is False
 
 
+class _FakeStreamResponse:
+    """Подделка requests.Response для тестов post_stream.
+
+    Именно ОБЪЕКТ, а не строка: post_stream проставляет .encoding, и голая
+    строка на этом падала бы по AttributeError, пряча настоящую проверку.
+    Стартовое значение — то самое ISO-8859-1, которое requests выбирает для
+    «text/event-stream» без charset.
+    """
+
+    encoding = "ISO-8859-1"
+
+
 def test_post_stream_asks_requests_not_to_buffer(monkeypatch):
     """Без stream=True requests скачивает ответ целиком перед возвратом — то
     есть SSE-поток Groq пришёл бы одним куском в конце, и стриминга бы не было
     вовсе, причём молча: код выглядел бы рабочим."""
     seen = {}
 
+    response = _FakeStreamResponse()
+
     def fake_post(url, **kwargs):
         seen.update(kwargs)
-        return "ответ"
+        return response
 
     monkeypatch.setattr(http_client.requests, "post", fake_post)
-    assert http_client.post_stream("http://x", {}, {"a": 1}, 5.0) == "ответ"
+    assert http_client.post_stream("http://x", {}, {"a": 1}, 5.0) is response
     assert seen["stream"] is True
 
 
@@ -98,9 +112,28 @@ def test_post_stream_keeps_the_browser_user_agent(monkeypatch):
 
     def fake_post(url, **kwargs):
         seen.update(kwargs)
-        return "ответ"
+        return _FakeStreamResponse()
 
     monkeypatch.setattr(http_client.requests, "post", fake_post)
     http_client.post_stream("http://x", {"Authorization": "Bearer k"}, {}, 5.0)
     assert seen["headers"]["User-Agent"] == http_client.USER_AGENT
     assert seen["headers"]["Authorization"] == "Bearer k"
+
+
+def test_post_stream_forces_utf8_on_the_response(monkeypatch):
+    """Живой баг (2026-08-18): Джони отвечал вслух набором звуков вместо речи.
+
+    Groq отдаёт SSE с заголовком «text/event-stream» БЕЗ charset, а requests в
+    таком случае по RFC 2616 берёт ISO-8859-1 — и iter_lines(decode_unicode=True)
+    превращает кириллицу в мохибейк («У меня всё» -> «Ð£ Ð¼ÐµÐ½Ñ Ð²ÑÑ»),
+    который уходит прямиком в синтез речи. Обычный post этим не болеет: там
+    тело читает response.json(), а json сам разбирается с UTF-8. Поэтому
+    чинить надо здесь, у границы, а не в brain_groq: любой будущий потребитель
+    post_stream наступил бы на те же грабли.
+    """
+
+    monkeypatch.setattr(
+        http_client.requests, "post", lambda url, **kwargs: _FakeStreamResponse()
+    )
+    response = http_client.post_stream("http://x", {}, {}, 5.0)
+    assert response.encoding == "utf-8"

@@ -53,14 +53,24 @@ def post_stream(url: str, headers: dict, payload: dict, timeout: float) -> reque
 
     timeout здесь — время до ПЕРВОГО байта, а не на весь ответ: длинный поток
     законно идёт дольше, и общего потолка на него нет.
+
+    Кодировку проставляем руками, и это не перестраховка. Groq присылает
+    «Content-Type: text/event-stream» без charset, а requests в таком случае
+    по RFC 2616 берёт ISO-8859-1 — iter_lines(decode_unicode=True) после
+    этого выдаёт вместо кириллицы мохибейк («У меня всё» -> «Ð£ Ð¼ÐµÐ½Ñ
+    Ð²ÑÑ»), и он уходит прямо в синтез речи: 2026-08-18 Джони отвечал вслух
+    набором звуков. Обычный post этим не болеет — там тело читает
+    response.json(), который про UTF-8 знает сам.
     """
-    return requests.post(
+    response = requests.post(
         url,
         headers={**headers, "User-Agent": USER_AGENT},
         json=payload,
         timeout=timeout,
         stream=True,
     )
+    response.encoding = "utf-8"
+    return response
 
 
 def post_form(
