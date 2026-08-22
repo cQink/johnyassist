@@ -325,3 +325,33 @@ def test_git_workdir_defaults_to_empty_string_when_missing(tmp_path):
     )
     loaded = config.load_config(tmp_path)
     assert loaded.settings.git_workdir == ""
+
+
+def test_игровая_модель_по_умолчанию_выключена():
+    """Пусто = никогда не переключаться, как git_workdir и streaming_fillers.
+    Переключение трогает видеопамять чужой машины — включать его молча нельзя."""
+    settings = config.Settings(
+        wake_word="джони", vosk_model_path="p", response_mode="voice",
+        whisper_model="medium", whisper_device="cpu",
+    )
+    assert settings.whisper_model_gaming == ""
+
+
+def test_игровая_модель_и_пороги_читаются_из_yaml(tmp_path):
+    (tmp_path / "apps.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "commands.yaml").write_text("{}", encoding="utf-8")
+    (tmp_path / "settings.yaml").write_text(
+        "wake_word: джони\n"
+        "vosk_model_path: p\n"
+        "response_mode: voice\n"
+        "whisper_model: medium\n"
+        "whisper_device: cuda\n"
+        "whisper_model_gaming: small\n"
+        "gpu_guard_low_mb: 2500\n"
+        "gpu_guard_high_mb: 4500\n",
+        encoding="utf-8",
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.settings.whisper_model_gaming == "small"
+    assert loaded.settings.gpu_guard_low_mb == 2500
+    assert loaded.settings.gpu_guard_high_mb == 4500

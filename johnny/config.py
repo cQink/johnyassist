@@ -18,6 +18,16 @@ class Settings:
     response_mode: str
     whisper_model: str
     whisper_device: str
+    # Модель, на которую уходить, пока запущена игра. Пусто = не переключаться
+    # никогда, и это правильное значение по умолчанию: подмена трогает
+    # видеопамять, а сколько её и на что она нужна — знает только владелец
+    # машины. Замер на RTX 3070 (2026-08-22): medium 2138 МБ, small 648 МБ.
+    whisper_model_gaming: str = ""
+    # Пороги свободной видеопамяти для запасного признака (игры мимо Steam).
+    # Зазор между ними обязан быть шире 1490 МБ — столько освобождает сама
+    # подмена, и на узком зазоре Джони закольцуется. Подробнее — game_watch.decide.
+    gpu_guard_low_mb: int = 2500
+    gpu_guard_high_mb: int = 4500
     tts_voice: str = "ru-RU-DmitryNeural"
     tts_provider: str = "fish"          # local (NeMo/XTTS) | fish (Джарвис) | edge (Дмитрий)
     fish_model_id: str = ""             # id клонированного голоса на fish.audio
@@ -127,6 +137,9 @@ def load_config(config_dir) -> Config:
         response_mode=s.get("response_mode", "voice"),
         whisper_model=s.get("whisper_model", "medium"),
         whisper_device=s.get("whisper_device", "cuda"),
+        whisper_model_gaming=str(s.get("whisper_model_gaming", "") or ""),
+        gpu_guard_low_mb=int(s.get("gpu_guard_low_mb", 2500)),
+        gpu_guard_high_mb=int(s.get("gpu_guard_high_mb", 4500)),
         tts_voice=s.get("tts_voice", "ru-RU-DmitryNeural"),
         tts_provider=s.get("tts_provider", "fish"),
         fish_model_id=s.get("fish_model_id", ""),
