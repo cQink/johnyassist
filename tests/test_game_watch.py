@@ -189,6 +189,7 @@ class ФальшивыеНастройки:
     whisper_model_gaming = "small"
     gpu_guard_low_mb = 2500
     gpu_guard_high_mb = 4500
+    whisper_device = "cuda"
 
 
 def _сторож(recognizer, *, игра, память):
@@ -198,6 +199,17 @@ def _сторож(recognizer, *, игра, память):
         game_running=lambda: игра,
         free_mb=lambda: память,
     )
+
+
+def _дождаться(условие, *, тайм_аут=2.0):
+    """Ждём условие опросом, а не фиксированным sleep — иначе тест либо
+    слишком долгий, либо изредка падает на медленной машине."""
+    предел = time.monotonic() + тайм_аут
+    while time.monotonic() < предел:
+        if условие():
+            return
+        time.sleep(0.005)
+    assert условие(), "условие не наступило за отведённое время"
 
 
 def test_запуск_игры_уводит_на_маленькую():
@@ -335,6 +347,19 @@ class ФальшивыеНастройкиВыключено:
     whisper_model_gaming = ""
     gpu_guard_low_mb = 2500
     gpu_guard_high_mb = 4500
+    whisper_device = "cuda"
+
+
+class ФальшивыеНастройкиCPU:
+    """whisper_model_gaming задан, но whisper_device — cpu. Панель
+    (johnny/panel.py) даёт переключить device в один клик отдельно от
+    whisper_model_gaming, и это ровно та комбинация, которую находка 5 ловит."""
+
+    whisper_model = "medium"
+    whisper_model_gaming = "small"
+    gpu_guard_low_mb = 2500
+    gpu_guard_high_mb = 4500
+    whisper_device = "cpu"
 
 
 def test_выключенный_сторож_не_дёргает_tick():
@@ -378,8 +403,51 @@ def test_выключенный_сторож_не_запускает_поток(
 
     assert guard._thread is None
     # Число живых потоков в процессе не выросло — поток не просто не
-    # сохранён в _thread, а действительно не создавался.
-    assert threading.active_count() == поток_до
+    # сохранён в _thread, а действительно не создавался. Сравнение <=, а не
+    # ==: во всём наборе тестов возможен чужой фоновый поток, который ещё не
+    # успел завершиться, и это не имеет отношения к проверяемому поведению.
+    assert threading.active_count() <= поток_до
+
+
+def test_cpu_устройство_выключает_сторож_даже_с_игровой_моделью():
+    """Находка 5 ревью: whisper_device выбирается отдельно от
+    whisper_model_gaming. На процессоре подменять нечего — видеопамять там не
+    расходуется, а перезагрузка модели на cpu — чистые секунды простоя и
+    потеря точности без всякой экономии. И наоборот: свободной видеопамяти на
+    cpu-машине честно мало, и запасной признак увёл бы на small вовсе без
+    причины, если бы enabled её не отсекал."""
+    recognizer = ФальшивыйRecognizer()
+    опрошено = []
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройкиCPU(),
+        game_running=lambda: (опрошено.append("game"), True)[1],
+        free_mb=lambda: (опрошено.append("free"), 100)[1],
+    )
+
+    assert guard.enabled is False
+
+    wanted = guard.tick()
+
+    assert wanted == recognizer.model_name  # ничего не тронул
+    assert recognizer.смены == []
+    assert опрошено == []
+
+
+def test_cpu_устройство_не_запускает_поток():
+    recognizer = ФальшивыйRecognizer()
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройкиCPU(),
+        game_running=lambda: True,
+        free_mb=lambda: 100,
+        poll_seconds=0.01,
+    )
+
+    guard.start()
+
+    assert guard._thread is None
 
 
 def test_повторный_start_не_заводит_второй_поток():
@@ -399,17 +467,6 @@ def test_повторный_start_не_заводит_второй_поток():
     assert guard._thread is первый_поток
     guard.stop()
     _дождаться(lambda: not первый_поток.is_alive())
-
-
-def _дождаться(условие, *, тайм_аут=2.0):
-    """Ждём условие опросом, а не фиксированным sleep — иначе тест либо
-    слишком долгий, либо изредка падает на медленной машине."""
-    предел = time.monotonic() + тайм_аут
-    while time.monotonic() < предел:
-        if условие():
-            return
-        time.sleep(0.005)
-    assert условие(), "условие не наступило за отведённое время"
 
 
 def test_stop_останавливает_цикл_опроса():
@@ -434,6 +491,107 @@ def test_stop_останавливает_цикл_опроса():
     _дождаться(lambda: not guard._thread.is_alive())
 
     число_на_момент_остановки = len(счётчик)
-    time.sleep(0.05)  # дать шанс потоку опросить снова, если stop не сработал
 
     assert len(счётчик) == число_на_момент_остановки
+
+
+def test_первый_опрос_происходит_сразу_а_не_через_poll_seconds():
+    """Находка 9 ревью: игра, уже идущая в момент запуска Джони (автозапуск
+    при входе в систему плюс ~3.5 минуты на загрузку моделей — человек
+    успевает войти в игру раньше), должна быть замечена сразу, а не только
+    через первый poll_seconds — иначе модель уже займёт видеопамять, которую
+    в этот момент делит с игрой. poll_seconds здесь заведомо больше времени
+    теста, чтобы отличить «опросили сразу» от «просто быстро опрашиваем»."""
+    recognizer = ФальшивыйRecognizer()
+    счётчик = []
+
+    def игра():
+        счётчик.append(1)
+        return False
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=игра,
+        free_mb=lambda: 6000,
+        poll_seconds=100.0,
+    )
+
+    guard.start()
+    _дождаться(lambda: len(счётчик) >= 1, тайм_аут=1.0)
+    guard.stop()
+
+    assert len(счётчик) >= 1
+
+
+def test_сбой_первого_опроса_не_мешает_потоку_завестись():
+    """Продолжение находки 9: опрос до цикла обёрнут в try/except именно
+    затем, чтобы сбой признака на самом первом тике не помешал потоку начать
+    штатный цикл — иначе один плохой опрос на старте выключал бы сторожа
+    навсегда, никак об этом не сообщив."""
+    recognizer = ФальшивыйRecognizer()
+    счётчик = []
+
+    def взрывной_первый_раз():
+        счётчик.append(1)
+        if len(счётчик) == 1:
+            raise OSError("реестр недоступен")
+        return False
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=взрывной_первый_раз,
+        free_mb=lambda: 6000,
+        poll_seconds=0.01,
+    )
+
+    guard.start()
+    _дождаться(lambda: len(счётчик) >= 2)
+    guard.stop()
+
+    assert len(счётчик) >= 2
+
+
+def test_stop_дожидается_текущего_тика_прежде_чем_вернуться():
+    """Находка 6 ревью: join в stop() обязан закрывать окно, а не только
+    сужать его. Поток, уже вошедший в tick() (например, в разгаре подмены
+    модели), не должен пережить сам вызов stop() — иначе restart_app в трее
+    мог бы запустить новый процесс Джони, пока старый сторож ещё доигрывает
+    use_model на той же карте."""
+    recognizer = ФальшивыйRecognizer()
+    можно_продолжить = threading.Event()
+    вошли_в_тик = threading.Event()
+
+    def медленный_признак():
+        вошли_в_тик.set()
+        можно_продолжить.wait(2.0)
+        return False
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=медленный_признак,
+        free_mb=lambda: 6000,
+        poll_seconds=0.01,
+    )
+
+    guard.start()
+    assert вошли_в_тик.wait(2.0) is True
+
+    stop_вернулся = threading.Event()
+
+    def остановить():
+        guard.stop()
+        stop_вернулся.set()
+
+    threading.Thread(target=остановить, daemon=True).start()
+
+    # Тик всё ещё держит признак заблокированным — stop() обязан ждать его
+    # завершения, а не вернуться немедленно.
+    assert stop_вернулся.wait(0.3) is False, "stop() вернулась раньше конца тика — окно не закрыто"
+
+    можно_продолжить.set()
+
+    assert stop_вернулся.wait(2.0) is True
+    assert guard._thread.is_alive() is False
