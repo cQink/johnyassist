@@ -8,7 +8,7 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 
-from . import autostart, panel_tools, single_instance
+from . import autostart, game_watch, panel_tools, single_instance
 from .config import load_config
 from .controller import AssistantController
 from .speaker import make_speaker
@@ -85,6 +85,12 @@ def main() -> None:
 
     mic = Microphone().open()
     logging.info("Тайминг запуска: микрофон +%.1fс", time.monotonic() - t0)
+
+    # Сторож видеопамяти: пока идёт игра, Whisper уходит на маленькую модель и
+    # возвращает карте ~1.5 ГБ. Выключен, если whisper_model_gaming пуст.
+    guard = game_watch.Guard(recognizer, config.settings)
+    guard.start()
+
     listener_available = getattr(listener, "available", False)
     recognizer_available = getattr(recognizer, "available", False)
     # Один и тот же разбор состояния, что показывает панель — иначе лог и UI
@@ -154,6 +160,7 @@ def main() -> None:
 
     def quit_app(_icon, _item) -> None:
         logging.info("Выход по команде из трея")
+        guard.stop()
         controller.stop()
         stop_event.set()
         icon.stop()

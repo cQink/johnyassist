@@ -166,3 +166,114 @@ def test_steam_game_running_ключа_нет(monkeypatch):
 
     monkeypatch.setattr(winreg, "OpenKey", бросить_отсутствие_ключа)
     assert steam_game_running() is False
+
+
+# --- Guard: подмена модели в фоне ---
+
+from johnny.game_watch import Guard
+
+
+class ФальшивыйRecognizer:
+    def __init__(self, model="medium"):
+        self.model_name = model
+        self.смены = []
+
+    def use_model(self, model):
+        self.смены.append(model)
+        self.model_name = model
+        return True
+
+
+class ФальшивыеНастройки:
+    whisper_model = "medium"
+    whisper_model_gaming = "small"
+    gpu_guard_low_mb = 2500
+    gpu_guard_high_mb = 4500
+
+
+def _сторож(recognizer, *, игра, память):
+    return Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=lambda: игра,
+        free_mb=lambda: память,
+    )
+
+
+def test_запуск_игры_уводит_на_маленькую():
+    recognizer = ФальшивыйRecognizer()
+
+    _сторож(recognizer, игра=True, память=6000).tick()
+
+    assert recognizer.смены == ["small"]
+
+
+def test_повторный_опрос_не_дёргает_модель():
+    """Сторож опрашивает раз в несколько секунд, а признак почти всегда тот же.
+    Каждая лишняя подмена — 2.4 секунды и выброшенная рабочая модель."""
+    recognizer = ФальшивыйRecognizer()
+    guard = _сторож(recognizer, игра=True, память=6000)
+
+    guard.tick()
+    guard.tick()
+    guard.tick()
+
+    assert recognizer.смены == ["small"]
+
+
+def test_выход_из_игры_возвращает_обычную():
+    recognizer = ФальшивыйRecognizer("small")
+
+    _сторож(recognizer, игра=False, память=6000).tick()
+
+    assert recognizer.смены == ["medium"]
+
+
+def test_сбой_признака_не_роняет_сторожа():
+    """Сторож живёт в фоновом потоке. Упадёт — Джони останется на той модели,
+    что была, и никто об этом не узнает до перезапуска."""
+    recognizer = ФальшивыйRecognizer()
+
+    def взрыв():
+        raise OSError("реестр недоступен")
+
+    guard = Guard(
+        recognizer,
+        ФальшивыеНастройки(),
+        game_running=взрыв,
+        free_mb=lambda: 6000,
+    )
+
+    assert guard.tick() == "medium"
+    assert recognizer.смены == []
+
+
+class ФальшивыйНедоступныйRecognizer:
+    """Модель по имени та же, что нужна, но распознавать нечем: имитирует
+    двойной отказ use_model из ревью задачи 1 — self._model остался None,
+    хотя model_name всё ещё называет старую модель."""
+
+    def __init__(self, model="medium", available=False):
+        self.model_name = model
+        self.available = available
+        self.смены = []
+
+    def use_model(self, model):
+        self.смены.append(model)
+        self.model_name = model
+        self.available = True
+        return True
+
+
+def test_недоступный_распознаватель_подменяется_даже_при_совпадении_имени():
+    """Дыра из ревью задачи 1: если сторож сравнивает только имена моделей,
+    он никогда не заметит, что распознаватель на самом деле пуст (available
+    == False), и Джони останется глухим до перезапуска даже после того, как
+    игра закончилась и wanted снова совпал с current."""
+    recognizer = ФальшивыйНедоступныйRecognizer("medium", available=False)
+
+    wanted = _сторож(recognizer, игра=False, память=6000).tick()
+
+    assert wanted == "medium"
+    assert recognizer.смены == ["medium"]
+    assert recognizer.available is True

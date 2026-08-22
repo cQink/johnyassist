@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, replace
 
-from . import chain, memory, panel_tools
+from . import chain, game_watch, memory, panel_tools
 from .actions import execute
 from .brain import interpret, interpret_streamed, make_providers, punctuate
 from .brain_groq import make_streaming_provider
@@ -338,6 +338,9 @@ def run(config_dir: str = "config") -> None:
     recognizer = Recognizer(
         config.settings.whisper_model, config.settings.whisper_device, vocabulary
     )
+    # Тот же сторож, что и в трее: консольный запуск не должен вести себя иначе.
+    guard = game_watch.Guard(recognizer, config.settings)
+    guard.start()
     listener = Listener(config.settings.wake_word, config.settings.vosk_model_path)
     controller = AssistantController(config, speaker)
 
@@ -359,4 +362,5 @@ def run(config_dir: str = "config") -> None:
     except KeyboardInterrupt:
         print("Выход.")
     finally:
+        guard.stop()
         listener.close()

@@ -6,6 +6,7 @@ Steam: decide() — чистая функция, а два признака чи
 """
 import logging
 import subprocess
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +94,92 @@ def decide(
     if free_mb > high_mb:
         return normal_model
     return current  # мёртвая зона между порогами: не трогаем
+
+
+_POLL_SECONDS = 5.0
+
+
+class Guard:
+    """Фоновый сторож: следит за признаками и просит сменить модель.
+
+    Про Whisper знает ровно одно — что у распознавателя есть use_model и
+    model_name. Признаки берёт функциями-аргументами, поэтому проверяется без
+    видеокарты и без Steam.
+    """
+
+    def __init__(self, recognizer, settings, *, game_running=steam_game_running,
+                 free_mb=free_vram_mb, poll_seconds: float = _POLL_SECONDS):
+        self._recognizer = recognizer
+        self._settings = settings
+        self._game_running = game_running
+        self._free_mb = free_mb
+        self._poll = poll_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(getattr(self._settings, "whisper_model_gaming", ""))
+
+    def tick(self) -> str:
+        """Один опрос. Возвращает имя модели, которая должна стоять сейчас.
+
+        Сбой признака не должен ронять поток: сторож фоновый, и его смерть
+        осталась бы незамеченной до перезапуска Джони — а Whisper при этом
+        навсегда застрял бы на той модели, что была в тот момент.
+        """
+        try:
+            game = bool(self._game_running())
+        except Exception:
+            logger.warning("Не удалось прочитать признак игры", exc_info=True)
+            game = False
+        try:
+            free = self._free_mb()
+        except Exception:
+            logger.warning("Не удалось прочитать свободную видеопамять", exc_info=True)
+            free = None
+
+        current = self._recognizer.model_name
+        wanted = decide(
+            current,
+            normal_model=self._settings.whisper_model,
+            gaming_model=self._settings.whisper_model_gaming,
+            game_running=game,
+            free_mb=free,
+            low_mb=self._settings.gpu_guard_low_mb,
+            high_mb=self._settings.gpu_guard_high_mb,
+        )
+        # available, а не только сравнение имён: use_model (задача 1) может
+        # провалиться дважды подряд (не поднялась ни новая модель, ни старая)
+        # и оставить распознаватель пустым, а model_name — по-прежнему
+        # называющим старую модель. Если бы тут сравнивались только имена,
+        # такой двойной отказ прошёл бы незамеченным до следующей смены
+        # признака, а до тех пор Джони был бы глухим без единого лога об
+        # этом. getattr со значением по умолчанию True — чтобы фальшивки в
+        # тестах без атрибута available вели себя как всегда готовые.
+        recognizer_ready = getattr(self._recognizer, "available", True)
+        if wanted != current or not recognizer_ready:
+            self._recognizer.use_model(wanted)
+        return wanted
+
+    def start(self) -> None:
+        """Запустить опрос в фоне. Выключенный настройкой сторож не стартует."""
+        if not self.enabled or self._thread is not None:
+            return
+
+        def loop() -> None:
+            while not self._stop.wait(self._poll):
+                try:
+                    self.tick()
+                except Exception:
+                    logger.exception("Сторож видеопамяти упал на опросе")
+
+        self._thread = threading.Thread(target=loop, daemon=True)
+        self._thread.start()
+        logger.info(
+            "Сторож видеопамяти запущен: во время игры модель %r",
+            self._settings.whisper_model_gaming,
+        )
+
+    def stop(self) -> None:
+        self._stop.set()
