@@ -148,12 +148,20 @@ def _take_warn(text: str) -> tuple[str, int]:
     return text, 0
 
 
-def _take_time(text: str) -> tuple[str, str]:
-    """«в 14:30», «в 9 утра», «в 8 часов вечера» → «14:30».
+# Слова, после которых «в 15» — это не время, а начало чего-то другого:
+# «в 15 сентября», «в 15 минут», «в 10 числа». Без этого разбор времени
+# съедал бы начало даты и она переставала находиться.
+_NOT_A_CLOCK = r"(?!\s*(?:мин\w*|дн\w*|нед\w*|мес\w*|числ\w*|" + "|".join(_MONTHS) + r"))"
 
-    Часть суток обязательна, когда час меньше 12 и написан без двоеточия:
-    «в 8 вечера» — это 20:00, а просто «в 8» само по себе двусмысленно.
-    Двусмысленное трактуем как названо (8 → 08:00) и не гадаем.
+
+def _take_time(text: str) -> tuple[str, str]:
+    """«в 14:30», «в 9 утра», «в 8 часов вечера», «в 15» → «14:30».
+
+    Голый час берём только когда он однозначен сам по себе: с двоеточием, со
+    словом «часов», с частью суток или больше двенадцати. Просто «в 8» — это
+    и восемь утра, и восемь вечера; такое остаётся в ТЕКСТЕ напоминания
+    («в 8 покормить кота») вместо того, чтобы превратиться в выдуманное
+    08:00. Ничего не теряется, и ничего не выдумано.
     """
     match = re.search(r"\bв\s+(\d{1,2})[:.](\d{2})\b", text)
     if match:
@@ -162,20 +170,20 @@ def _take_time(text: str) -> tuple[str, str]:
             return _cut(text, match), f"{hour:02d}:{minute:02d}"
         return text, ""
     match = re.search(
-        r"\bв\s+(\d{1,2})\s*(?:час\w*)?\s*(утра|дня|вечера|ночи)?\b(?!\s*(?:мин\w*|дн\w*|нед\w*|мес\w*))",
-        text,
+        r"\bв\s+(\d{1,2})\s*(?:час\w*)?\s*(утра|дня|вечера|ночи)?\b" + _NOT_A_CLOCK, text
     )
-    if match and (match.group(2) or "час" in match.group(0)):
-        hour = int(match.group(1))
-        if hour > 24:
-            return text, ""
-        part = match.group(2)
-        if part in ("вечера", "ночи") and hour < 12:
-            hour = (hour + 12) % 24
-        elif part == "дня" and hour < 12:
-            hour += 12
-        return _cut(text, match), f"{hour % 24:02d}:00"
-    return text, ""
+    if match is None:
+        return text, ""
+    hour = int(match.group(1))
+    part = match.group(2)
+    однозначно = bool(part) or "час" in match.group(0) or 13 <= hour <= 23
+    if not однозначно or hour > 24:
+        return text, ""
+    if part in ("вечера", "ночи") and hour < 12:
+        hour = (hour + 12) % 24
+    elif part == "дня" and hour < 12:
+        hour += 12
+    return _cut(text, match), f"{hour % 24:02d}:00"
 
 
 def _take_date(text: str, today: dt.date, weekday_of_repeat: int | None):
