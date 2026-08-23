@@ -849,3 +849,37 @@ def test_brain_fallback_uses_streaming_pipeline_when_enabled(monkeypatch):
     assert outcome.via == "groq"
     # spoken=True у StreamResult -> _speak_reply обязан промолчать.
     assert said == []
+
+
+def test_календарь_и_напоминание_звучат_текстом_а_не_дзынькают(monkeypatch):
+    """Живой промах 2026-08-23: на «что у меня завтра» Джони ответил «Так точно».
+
+    Команда отработала правильно — в логе `Распознано: 'что у меня завтра'`, —
+    но ответом на такой вопрос является сам список, а обычный путь _respond
+    при успехе предпочитает короткий звук. У remind причина другая и не менее
+    важная: в его сообщении лежит РАСПОЗНАННАЯ ДАТА, и это единственный шанс
+    услышать, что фразу разобрали не так.
+    """
+    import johnny.app as app
+    from johnny.actions import ActionResult
+    from johnny.config import CommandRule, Config, Settings
+
+    for действие, фраза, ответ in (
+        ("calendar", "что у меня завтра", "Завтра: 14:30 — врач"),
+        ("remind", "напомни завтра про врача", "Записал на завтра: врача"),
+    ):
+        monkeypatch.setattr(
+            app,
+            "execute",
+            lambda routed, apps, channels, new_tab=True, people=None, config=None, _о=ответ:
+                ActionResult(True, _о),
+        )
+        config = Config(
+            apps={},
+            commands=[CommandRule(фраза, действие, "-")],
+            settings=Settings("джони", "", "off", "medium", "cuda"),
+        )
+        sp = SpySpeaker(answer_played=True)   # звук ГОТОВ проиграться, но не должен
+        handle_command(фраза, config, sp)
+        assert sp.said == [ответ], действие
+        assert sp.answer_calls == 0, f"{действие} не должен даже пытаться играть звук"
