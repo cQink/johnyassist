@@ -595,3 +595,21 @@ def test_stop_дожидается_текущего_тика_прежде_чем
 
     assert stop_вернулся.wait(2.0) is True
     assert guard._thread.is_alive() is False
+
+
+def test_nvidia_smi_запускается_без_окна_консоли(monkeypatch):
+    """Иначе раз в пять секунд поверх всего мигает чёрный прямоугольник.
+
+    Проверяем именно флаг, а не «видно ли окно»: увидеть его в тесте нельзя,
+    а забыть при следующей правке — легко. Опрос идёт в фоне постоянно, и
+    мигает он в том числе поверх полноэкранной игры.
+    """
+    вызовы = []
+
+    def запомнить(*args, **kwargs):
+        вызовы.append(kwargs)
+        return _результат(stdout="2048\n")
+
+    monkeypatch.setattr("johnny.game_watch.subprocess.run", запомнить)
+    free_vram_mb()
+    assert вызовы[0].get("creationflags") == subprocess.CREATE_NO_WINDOW

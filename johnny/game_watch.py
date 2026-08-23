@@ -13,6 +13,14 @@ logger = logging.getLogger(__name__)
 _STEAM_KEY = r"Software\Valve\Steam"
 _NVIDIA_SMI_TIMEOUT = 5.0
 
+# Windows поднимает окно консоли на КАЖДЫЙ запуск консольной программы. При
+# опросе раз в пять секунд это чёрный прямоугольник, мигающий поверх всего —
+# в том числе поверх полноэкранной игры, ради которой сторож и заведён.
+# Живая жалоба владельца 2026-08-23: «убери консоль, которая появляется раз в
+# 5 сек». Флаг есть только на Windows; на остальных системах его нет, но там и
+# окно не всплывает, поэтому ноль — правильное значение по умолчанию.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def steam_game_running() -> bool:
     """True, если Steam запустил игру: RunningAppID — её номер, 0 — игры нет.
@@ -50,6 +58,7 @@ def free_vram_mb() -> int | None:
             capture_output=True,
             text=True,
             timeout=_NVIDIA_SMI_TIMEOUT,
+            creationflags=_NO_WINDOW,      # без этого раз в 5 секунд мигает консоль
         )
     except (OSError, subprocess.SubprocessError):
         return None
