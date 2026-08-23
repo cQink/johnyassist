@@ -16,6 +16,7 @@ from . import discord_action   # noqa: F401
 from . import git_action       # noqa: F401
 from . import keyboard_action  # noqa: F401
 from . import memory_action    # noqa: F401
+from . import reminder_action  # noqa: F401
 from . import steam            # noqa: F401
 from . import system           # noqa: F401
 from . import windows          # noqa: F401  (зависит от browser — грузится после)

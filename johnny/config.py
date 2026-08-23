@@ -70,6 +70,11 @@ class Settings:
     # будет синтезироваться каждый раз и сама станет задержкой, которую
     # призвана скрыть. Слишком длинные отбрасываются при загрузке.
     streaming_fillers: list[str] = field(default_factory=list)
+    # Сводка в телеграм (digest.py): координаты для погоды, часовой пояс,
+    # время утренней и вечерней сводки. Пустой блок = значения по умолчанию из
+    # самого digest.py — он умеет работать и без этого блока, чтобы облачный
+    # запуск не зависел от того, что кто-то не забыл его дописать.
+    digest: dict = field(default_factory=dict)
     # Внешние тулзы (Azure Vision, Face++, social-analyzer, переводчик):
     # согласие, квоты, адрес ресурса, глубина обхода. Пустой блок = всё
     # выключено, и это правильное значение по умолчанию — коннекторы тратят
@@ -163,6 +168,7 @@ def load_config(config_dir) -> Config:
         streaming=bool(s.get("streaming", False)),
         streaming_first_chunk=int(s.get("streaming_first_chunk", 120)),
         streaming_fillers=_short_fillers(s.get("streaming_fillers") or []),
+        digest=s.get("digest") or {},
         connectors=s.get("connectors") or {},
     )
 

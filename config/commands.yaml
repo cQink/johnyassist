@@ -882,6 +882,39 @@
   action: git_commit
   template: "{0}"
 
+# Календарь голосом (johnny/actions/reminder_action.py). Записанное уезжает в
+# config/calendar.yaml, откуда его читает утренняя сводка в телеграм.
+#
+# Фразы-вопросы стоят ПЕРЕД «напомни *» не по важности, а потому что шаблон со
+# звёздочкой жадный: route_exact берёт первое совпадение по порядку файла.
+"что у меня сегодня":
+  action: calendar
+  template: "today"
+"что в календаре":
+  action: calendar
+  template: "today"
+"что у меня завтра":
+  action: calendar
+  template: "tomorrow"
+"что у меня на неделе":
+  action: calendar
+  template: "week"
+"что на этой неделе":
+  action: calendar
+  template: "week"
+"добавь в календарь *":
+  action: remind
+  template: "{0}"
+"запиши в календарь *":
+  action: remind
+  template: "{0}"
+"напомни *":
+  action: remind
+  template: "{0}"
+"напоминай *":
+  action: remind
+  template: "{0}"
+
 # ВАЖНО: стоят В САМОМ КОНЦЕ файла намеренно. "открой *"/"фокус *" — это
 # ловящий всё шаблон (одна звёздочка без хвоста), а route_exact берёт первое
 # совпадение по порядку списка. Конкретные "открой ютуб"/"открой браузер" и
