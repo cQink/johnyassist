@@ -116,8 +116,15 @@ def test_кривое_время_в_настройках_не_отменяет_�
     assert digest.should_run(dt.datetime(2026, 8, 24, 3, 0), "семь тридцать") is True
 
 
-def test_неизвестный_часовой_пояс_не_роняет_запуск():
-    assert digest.local_now("Луна/Море_Спокойствия") is not None
+def test_неизвестный_часовой_пояс_это_none_а_не_время_машины():
+    """Раньше здесь был запасной путь «посчитаю по машине», и он был ловушкой.
+
+    Машина в облаке живёт по UTC — на два часа мимо Стокгольма. should_run не
+    попал бы в окно ни разу, сводка не приходила бы никогда, и молчание было
+    бы неотличимо от «сегодня нечего сказать».
+    """
+    assert digest.local_now("Луна/Море_Спокойствия") is None
+    assert digest.local_now("Europe/Stockholm") is not None
 
 
 # -- настройки и секреты --
@@ -156,3 +163,22 @@ def test_переменные_окружения_главнее_файла(monke
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "99")
     конфиг = Конфиг(secrets={"telegram_bot_token": "из_файла", "telegram_chat_id": "42"})
     assert digest.секреты(конфиг) == ("из_облака", "99")
+
+
+def test_запуск_по_расписанию_без_часового_пояса_падает_а_не_молчит(monkeypatch):
+    """Красный запуск в GitHub видно. Молчащую сводку не видно никак.
+
+    Без зоны решать «утро сейчас или вечер» не по чему, а угадать значит слать
+    не вовремя. Поэтому cron-запуск обязан завершиться ошибкой.
+    """
+    monkeypatch.setattr(digest, "local_now", lambda tz: None)
+    assert digest.main([]) == 1
+
+
+def test_явно_названная_сводка_считается_даже_без_пояса(monkeypatch):
+    # Руками или кнопкой Run workflow: решать «утро или вечер» не нужно —
+    # уже сказано, и падать не из-за чего.
+    monkeypatch.setattr(digest, "local_now", lambda tz: None)
+    monkeypatch.setattr(digest.weather, "fetch", lambda *a, **kw: None)
+    monkeypatch.setattr(digest.events, "load_events", lambda *a, **kw: [])
+    assert digest.main(["morning", "--dry-run"]) == 0

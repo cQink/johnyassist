@@ -73,13 +73,23 @@ def настройки(config) -> dict:
     return merged
 
 
-def local_now(timezone: str) -> dt.datetime:
-    """Текущее время человека. Сбой часового пояса — не повод не отправить сводку."""
+def local_now(timezone: str) -> dt.datetime | None:
+    """Текущее время человека. None — часовой пояс неизвестен.
+
+    Именно None, а не «посчитаю по времени машины». Раньше здесь был как раз
+    такой запасной путь, и он оказался ловушкой: машина в облаке живёт по UTC,
+    то есть на два часа мимо. `should_run` не попал бы в окно НИ РАЗУ, сводка
+    не приходила бы никогда — и ничто бы об этом не сообщило. Молчание тут
+    неотличимо от «сегодня нечего сказать».
+
+    Причина, по которой это вообще случается: zoneinfo берёт зоны из системы,
+    а на Windows их нет вовсе — нужен пакет tzdata (он есть в requirements.txt
+    и в workflow). Поймано проверкой из чистого клона 2026-08-26.
+    """
     try:
         return dt.datetime.now(ZoneInfo(timezone))
-    except (ZoneInfoNotFoundError, ValueError):
-        logger.warning("Неизвестный часовой пояс %r — считаю по местному времени машины", timezone)
-        return dt.datetime.now()
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        return None
 
 
 def should_run(now: dt.datetime, target: str) -> bool:
@@ -159,6 +169,19 @@ def main(argv=None) -> int:
     config = load_config(CONFIG_DIR)
     options = настройки(config)
     now = local_now(str(options["timezone"]))
+    if now is None:
+        logger.error(
+            "Часовой пояс %r неизвестен: нет пакета tzdata. Время сводок посчитать не по чему.",
+            options["timezone"],
+        )
+        if args.kind is None:
+            # Запуск по расписанию: решать «утро сейчас или вечер» не по чему,
+            # а угадать значит слать не вовремя. Падаем с ошибкой — красный
+            # запуск в GitHub видно, а молчащую сводку не видно никак.
+            return 1
+        # Сводку назвали явно (руками, кнопкой Run workflow) — решать нечего,
+        # считаем по времени машины и продолжаем.
+        now = dt.datetime.now()
 
     kind = args.kind or choose_kind(now, options)
     if kind is None:
