@@ -31,7 +31,19 @@ on:
     - cron: "30 6 * * *"      # 07:30 зимой
     - cron: "0 19 * * *"      # 21:00 летом
     - cron: "0 20 * * *"      # 21:00 зимой
-  workflow_dispatch:          # кнопка «запустить сейчас» — для проверки
+  # Кнопка «запустить сейчас»: и для проверки, и просто чтобы получить сводку
+  # среди дня, не дожидаясь утра.
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "Какую сводку собрать"
+        type: choice
+        options: [auto, morning, evening]
+        default: auto
+      force:
+        description: "Отправить, даже если сказать нечего"
+        type: boolean
+        default: false
 
 jobs:
   digest:
@@ -60,4 +72,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python digest.py
+        # Условия написаны через «!=», а не «== && ... || ...», и это не
+        # вкусовщина: у GitHub пустая строка ЛОЖНА, поэтому «x == 'auto' && ''»
+        # проваливается в правую ветку и подставляет 'auto' вместо пустоты.
+        # При запуске по расписанию весь контекст inputs пуст, и обе подстановки
+        # дают пустую строку — то есть ровно «python digest.py».
+        run: python digest.py ${{ inputs.kind != 'auto' && inputs.kind || '' }} ${{ inputs.force && '--force' || '' }}
