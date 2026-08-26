@@ -271,3 +271,30 @@ def test_пустая_ссылка_в_сеть_не_ходит(monkeypatch):
 
     monkeypatch.setattr(school.urllib.request, "urlopen", нельзя)
     assert fetch("") is None
+
+
+# -- переименование предметов настройкой --
+
+def test_предмет_переименовывается_по_короткому_имени():
+    # «Svenska som andra språk» человек называет просто «Svenska».
+    assert short_subject("Lektion Svenska som andra språk nivå 2",
+                         {"Svenska som andra språk": "Svenska"}) == "Svenska"
+
+
+def test_переименование_работает_и_по_полному_имени():
+    # В настройках можно написать то, что видишь в сводке, — или то, что
+    # отдаёт SchoolSoft. Гадать, что получилось после правил, не нужно.
+    assert short_subject("Lektion Kemi nivå 1", {"Lektion Kemi nivå 1": "Химия"}) == "Химия"
+
+
+def test_переименование_не_зависит_от_регистра():
+    assert short_subject("Lektion Kemi nivå 1", {"kemi": "Химия"}) == "Химия"
+
+
+def test_чужое_переименование_не_трогает_предмет():
+    assert short_subject("Lektion Kemi nivå 1", {"Fysik": "Физика"}) == "Kemi"
+
+
+def test_переименование_доезжает_до_разбора_фида():
+    события = parse_feed(ФИД, {"Kemi": "Химия"})
+    assert [e.title for e in lessons_on(события, СРЕДА)] == ["Химия", "Engelska"]

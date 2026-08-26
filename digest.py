@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from johnny import events, notify, school, weather  # noqa: E402
+from johnny import events, notify, school, translate, weather  # noqa: E402
 from johnny.config import load_config               # noqa: E402
 
 logger = logging.getLogger("digest")
@@ -73,6 +73,12 @@ _DEFAULTS = {
     # поэтому запас общий и настраивается здесь.
     "task_warn_days": 7,
     "school": True,
+    # Перевод меню столовой на русский моделью. Названия предметов НЕ трогает —
+    # для них есть subject_names ниже, и это осознанно разные механизмы.
+    "translate_menu": True,
+    # Переименование предметов: правило укорачивания даёт формально верное имя,
+    # но «Svenska som andra språk» человек называет просто «Svenska».
+    "subject_names": {},
 }
 
 
@@ -144,22 +150,28 @@ class Школа:
         return bool(self.lessons or self.menu or self.tasks or self.changes)
 
 
-def собрать_школу(школьные, day: dt.date, today: dt.date, changes, warn_days: int) -> Школа:
-    """Уроки на день, меню, ближайшие контрольные и изменения расписания.
+def собрать_школу(школьные, day: dt.date, changes, warn_days: int, menu="") -> Школа:
+    """Уроки, меню, ближайшие контрольные и изменения — на день `day`.
+
+    ВСЁ СЧИТАЕТСЯ ОТ `day`, а не от сегодняшнего числа, и в этом смысл: вечерняя
+    сводка целиком про завтра, о чём прямо сказано в её первой строке. Пока
+    отсчёт шёл от сегодня, вечером в день контрольной она всё ещё висела в
+    списке — уже написанная. Теперь окно начинается с того дня, про который
+    сводка, и написанное вчера в неё не попадает.
 
     Аргумент назван «школьные», а не events, сознательно: имя events занято
     модулем календаря, и параметр с тем же именем перекрыл бы его внутри
     функции — вместе с events.in_days, который здесь и нужен.
     """
     задания = []
-    for task in school.tasks_between(школьные, today, today + dt.timedelta(days=warn_days)):
-        осталось = (task.date() - today).days
+    for task in school.tasks_between(школьные, day, day + dt.timedelta(days=warn_days)):
+        осталось = (task.date() - day).days
         хвост = f" ({events.in_days(осталось)})" if осталось else ""
         время = f"{task.time()} " if task.time() else ""
         задания.append(f"{время}{task.title}{хвост}".strip())
     return Школа(
         lessons=school.describe_lessons(school.lessons_on(школьные, day)),
-        menu=school.menu_on(школьные, day),
+        menu=menu or school.menu_on(школьные, day),
         tasks=задания,
         changes=changes.lines() if changes else [],
     )
@@ -245,7 +257,7 @@ def собрать_расписание(config, options, day: dt.date, today: dt
     text = school.fetch(url)
     if text is None:
         return Школа()
-    школьные = school.parse_feed(text)
+    школьные = school.parse_feed(text, options.get("subject_names") or {})
     прошлый = school.load_snapshot(SNAPSHOT)
     новый = school.snapshot(школьные, today)
     изменения = school.diff(прошлый, новый)
@@ -253,9 +265,24 @@ def собрать_расписание(config, options, day: dt.date, today: dt
         logger.info("Расписание изменилось: %s", "; ".join(изменения.lines()))
     if not dry_run:
         school.save_snapshot(SNAPSHOT, новый)
+    меню = school.menu_on(школьные, day)
+    if меню and options.get("translate_menu", True):
+        меню = translate.dish_to_russian(меню, _переводчик(config))
     return собрать_школу(
-        школьные, day, today, изменения, int(options.get("task_warn_days", 7))
+        школьные, day, изменения, int(options.get("task_warn_days", 7)), menu=меню
     )
+
+
+def _переводчик(config):
+    """Функция перевода или None: ключа Groq может не быть, и это нормально.
+
+    Без ключа меню просто останется шведским — сводка от этого не пострадает.
+    """
+    ключ = os.environ.get("GROQ_API_KEY", "").strip() or str(
+        (getattr(config, "secrets", None) or {}).get("groq_api_key") or ""
+    ).strip()
+    модель = getattr(getattr(config, "settings", None), "groq_model", "") or "openai/gpt-oss-120b"
+    return translate.make_asker(ключ, модель)
 
 
 def main(argv=None) -> int:

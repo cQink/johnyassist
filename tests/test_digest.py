@@ -316,3 +316,60 @@ def test_пропавший_урок_доезжает_до_сводки(monkeypa
 def test_окружение_главнее_файла_и_для_школы(monkeypatch):
     monkeypatch.setenv("SCHOOLSOFT_ICAL_URL", "https://из-облака/feed")
     assert digest.адрес_школы(КонфигСоСсылкой()) == "https://из-облака/feed"
+
+
+def test_вечером_после_контрольной_её_уже_нет():
+    """Вечерняя сводка целиком про завтра — значит и считает от завтра.
+
+    Пока отсчёт шёл от сегодняшнего числа, вечером в день контрольной она всё
+    ещё висела в списке — уже написанная. Поймано прогоном по дням 26.08.2026.
+    """
+    фид = (
+        "BEGIN:VEVENT\nUID:ps_assignment-1-2026-08-24T10:10\n"
+        "DTSTART;TZID=Europe/Berlin:20260824T101000\nSUMMARY:Prov kap1\nEND:VEVENT\n"
+    )
+    школьные = digest.school.parse_feed(фид)
+    утром = digest.собрать_школу(школьные, ДЕНЬ, None, 7)
+    вечером = digest.собрать_школу(школьные, ДЕНЬ + dt.timedelta(days=1), None, 7)
+    assert утром.tasks == ["10:10 Prov kap1"]
+    assert вечером.tasks == []
+
+
+def test_накануне_контрольная_названа_завтрашней():
+    фид = (
+        "BEGIN:VEVENT\nUID:ps_assignment-1-2026-08-25T10:10\n"
+        "DTSTART;TZID=Europe/Berlin:20260825T101000\nSUMMARY:Prov kap1\nEND:VEVENT\n"
+    )
+    школа_ = digest.собрать_школу(digest.school.parse_feed(фид), ДЕНЬ, None, 7)
+    assert школа_.tasks == ["10:10 Prov kap1 (завтра)"]
+
+
+def test_меню_переводится_если_переводчик_дан(monkeypatch, tmp_path):
+    monkeypatch.setattr(digest, "SNAPSHOT", tmp_path / "снимок.json")
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: ФИД_С_МЕНЮ)
+    monkeypatch.setattr(digest, "_переводчик", lambda config: (lambda p: "Чили кон карне с рисом"))
+    результат = digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+    assert результат.menu == "Чили кон карне с рисом"
+
+
+def test_перевод_можно_выключить(monkeypatch, tmp_path):
+    def нельзя(config):
+        raise AssertionError("translate_menu: false значит не переводить вовсе")
+
+    monkeypatch.setattr(digest, "SNAPSHOT", tmp_path / "снимок.json")
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: ФИД_С_МЕНЮ)
+    monkeypatch.setattr(digest, "_переводчик", нельзя)
+    опции = dict(digest._DEFAULTS, translate_menu=False)
+    результат = digest.собрать_расписание(КонфигСоСсылкой(), опции, ДЕНЬ, ДЕНЬ, False)
+    assert результат.menu == "Chili con carne med ris"
+
+
+# В DESCRIPTION перевод строки записан ЭКРАНИРОВАННЫМ (обратный слэш и буква
+# n) — именно так его пишет SchoolSoft, и именно так «Huvudrätt» отделяется от
+# названия блюда. Строка сырая (r"") намеренно: обычная превратила бы
+# экранирование в настоящий перевод строки, и разбор увидел бы два свойства
+# вместо одного — на этом уже спотыкались.
+ФИД_С_МЕНЮ = (
+    "BEGIN:VEVENT\nUID:lunchmenu-35-1-2\nDTSTART;VALUE=DATE:20260824\n"
+    "SUMMARY:Matsedel\n" + r"DESCRIPTION:Huvudrätt\nChili con carne med ris" + "\nEND:VEVENT\n"
+)

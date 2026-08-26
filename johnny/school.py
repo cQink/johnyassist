@@ -106,15 +106,29 @@ def classify(uid: str) -> str:
     return _KIND_BY_PREFIX.get(prefix, OTHER)
 
 
-def short_subject(summary: str) -> str:
+def short_subject(summary: str, overrides: dict | None = None) -> str:
     """«Lektion Matematik fortsättning nivå 1c» → «Matematik fortsättning».
 
     Шведские названия оставляем как есть — решение владельца: именно они стоят
     у него в расписании и на двери кабинета, и перевод заставлял бы сверять
     два имени вместо одного.
+
+    overrides — словарь из настроек (digest.subject_names) для случаев, когда
+    правило укорачивания даёт формально верное, но неудобное имя: «Svenska som
+    andra språk» человек называет просто «Svenska». Сверка идёт и с укороченным
+    именем, и с полным, без учёта регистра, — чтобы в настройках можно было
+    написать то, что видишь в сводке, а не гадать, что получилось после правил.
     """
-    text = _LESSON_PREFIX.sub("", (summary or "").strip())
-    return _LEVEL_TAIL.sub("", text).strip() or (summary or "").strip()
+    полное = (summary or "").strip()
+    text = _LESSON_PREFIX.sub("", полное)
+    короткое = _LEVEL_TAIL.sub("", text).strip() or полное
+    if overrides:
+        по_ключу = {str(k).strip().lower(): str(v) for k, v in overrides.items()}
+        for вариант in (короткое, полное, text.strip()):
+            замена = по_ключу.get(вариант.lower())
+            if замена:
+                return замена
+    return короткое
 
 
 def clean_task(summary: str) -> str:
@@ -139,13 +153,13 @@ def task_kind(summary: str) -> str:
     return ""
 
 
-def parse_feed(text: str) -> list[SchoolEvent]:
+def parse_feed(text: str, subject_names: dict | None = None) -> list[SchoolEvent]:
     """Разобранный фид → список событий, отсортированный по времени."""
     events = []
     for raw in ical.parse(text):
         kind = classify(raw.uid)
         if kind == LESSON:
-            title, detail = short_subject(raw.summary), raw.description
+            title, detail = short_subject(raw.summary, subject_names), raw.description
         elif kind == MENU:
             title, detail = _menu_title(raw.description), _menu_dish(raw.description)
         else:
