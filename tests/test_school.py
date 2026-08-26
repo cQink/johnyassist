@@ -298,3 +298,20 @@ def test_чужое_переименование_не_трогает_предм�
 def test_переименование_доезжает_до_разбора_фида():
     события = parse_feed(ФИД, {"Kemi": "Химия"})
     assert [e.title for e in lessons_on(события, СРЕДА)] == ["Химия", "Engelska"]
+
+
+def test_блюдо_в_несколько_строк_схлопывается():
+    """Школа пишет часть блюд в две строки — в сводке это разорвало бы строку.
+
+    Живой пример из фида: «Pastasallad vegetarisk, serveras med Smakis» и
+    «vid Odenkampen i Vinterviken» — одно блюдо, два переноса.
+    """
+    фид = (
+        "BEGIN:VEVENT\nUID:lunchmenu-35-2-2\nDTSTART;VALUE=DATE:20260826\n"
+        "SUMMARY:Matsedel\n"
+        + r"DESCRIPTION:Huvudrätt\nPastasallad vegetarisk\, serveras med Smakis\nvid Odenkampen"
+        + "\nEND:VEVENT\n"
+    )
+    блюдо = menu_on(parse_feed(фид), СРЕДА)
+    assert "\n" not in блюдо
+    assert блюдо == "Pastasallad vegetarisk, serveras med Smakis vid Odenkampen"

@@ -179,8 +179,15 @@ def _menu_title(description: str) -> str:
 
 
 def _menu_dish(description: str) -> str:
+    """Само блюдо — из второй строки описания, и обязательно в ОДНУ строку.
+
+    Пробелы схлопываются не для красоты: часть блюд школа пишет в несколько
+    строк («…serveras med Smakis» / «vid Odenkampen i Vinterviken»), и такой
+    перенос разорвал бы строку сводки пополам — в том числе когда перевод
+    выключен. Заодно избавляет модель-переводчик от многострочного ввода.
+    """
     parts = (description or "").split("\n", 1)
-    return parts[1].strip() if len(parts) > 1 else ""
+    return " ".join(parts[1].split()) if len(parts) > 1 else ""
 
 
 def fetch(url: str, timeout: float = _TIMEOUT) -> str | None:
