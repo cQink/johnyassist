@@ -182,3 +182,137 @@ def test_явно_названная_сводка_считается_даже_б
     monkeypatch.setattr(digest.weather, "fetch", lambda *a, **kw: None)
     monkeypatch.setattr(digest.events, "load_events", lambda *a, **kw: [])
     assert digest.main(["morning", "--dry-run"]) == 0
+
+
+# -- школьная часть --
+
+def школа(**поля):
+    return digest.Школа(**поля)
+
+
+def test_уроки_отдельной_строкой():
+    текст = digest.build("morning", [], "", ДЕНЬ, notable=False,
+                         школа=школа(lessons="10:00 Kemi, 12:15 Engelska (до 13:20)"))
+    assert "Уроки: 10:00 Kemi, 12:15 Engelska (до 13:20)" in текст
+
+
+def test_обед_отдельной_строкой():
+    текст = digest.build("morning", [], "", ДЕНЬ, notable=False,
+                         школа=школа(menu="Chili con carne med ris"))
+    assert "Обед: Chili con carne med ris" in текст
+
+
+def test_изменения_стоят_сразу_за_уроками():
+    """Это единственная строка, ради которой сводку стоит открыть немедленно.
+
+    В общем списке дел, между днём рождения и контрольной, отмена урока
+    потерялась бы — а именно ради неё всё и затевалось.
+    """
+    текст = digest.build("morning", события("врач"), "+18, ясно", ДЕНЬ, notable=True,
+                         школа=школа(lessons="10:00 Kemi", menu="Пюре",
+                                     changes=["отменили Kemi (26.08)"]))
+    строки = текст.splitlines()
+    assert строки[2].startswith("Уроки:")
+    assert строки[3] == "! Расписание: отменили Kemi (26.08)"
+    assert строки[4].startswith("Обед:")
+
+
+def test_контрольные_идут_общим_списком_с_делами():
+    текст = digest.build("morning", события("врач"), "", ДЕНЬ, notable=False,
+                         школа=школа(tasks=["10:10 Prov kap1 (через 8 дней)"]))
+    assert текст.splitlines()[-2:] == ["— врач", "— 10:10 Prov kap1 (через 8 дней)"]
+
+
+def test_одних_уроков_достаточно_чтобы_написать():
+    # Утренняя сводка в учебный день осмысленна и без событий и без дождя.
+    assert digest.build("morning", [], "+18, ясно", ДЕНЬ, notable=False,
+                        школа=школа(lessons="10:00 Kemi")) != ""
+
+
+def test_выходной_без_уроков_и_без_дел_молчит():
+    assert digest.build("morning", [], "+18, ясно", ДЕНЬ, notable=False, школа=школа()) == ""
+
+
+def test_без_школьного_блока_сводка_прежняя():
+    # Обратная совместимость: школы может не быть вовсе (нет ссылки, лето).
+    assert digest.build("morning", события("врач"), "", ДЕНЬ, notable=False) == (
+        "Доброе утро. Сегодня понедельник, 24 августа.\n— врач"
+    )
+
+
+# -- сбор расписания --
+
+class КонфигСоСсылкой:
+    secrets = {"schoolsoft_ical_url": "https://example.invalid/feed"}
+    settings = type("S", (), {"digest": {}})()
+
+
+def test_без_ссылки_в_сеть_не_ходим(monkeypatch):
+    def нельзя(*args, **kwargs):
+        raise AssertionError("без ссылки на фид ходить некуда")
+
+    monkeypatch.setattr(digest.school, "fetch", нельзя)
+    monkeypatch.delenv("SCHOOLSOFT_ICAL_URL", raising=False)
+    результат = digest.собрать_расписание(Конфиг(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+    assert not результат
+
+
+def test_школу_можно_выключить_настройкой(monkeypatch):
+    def нельзя(*args, **kwargs):
+        raise AssertionError("school: false значит не ходить вовсе")
+
+    monkeypatch.setattr(digest.school, "fetch", нельзя)
+    опции = dict(digest._DEFAULTS, school=False)
+    assert not digest.собрать_расписание(КонфигСоСсылкой(), опции, ДЕНЬ, ДЕНЬ, False)
+
+
+def test_недоступный_фид_не_роняет_сводку(monkeypatch):
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: None)
+    assert not digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+
+
+ФИД_ДЛЯ_СВОДКИ = (
+    "BEGIN:VEVENT\nUID:lesson-1-2-w35\n"
+    "DTSTART;TZID=Europe/Berlin:20260824T100000\n"
+    "DTEND;TZID=Europe/Berlin:20260824T112000\n"
+    "SUMMARY:Lektion Kemi nivå 1\nEND:VEVENT\n"
+)
+
+
+def test_просмотр_не_съедает_отмену(monkeypatch, tmp_path):
+    """--dry-run НЕ сохраняет слепок, и это важнее, чем кажется.
+
+    Иначе человек посмотрел бы, что получится, слепок обновился бы, и
+    следующий — настоящий — запуск сравнил бы уже с новым: отмена урока
+    исчезла бы, ни разу никому не показавшись.
+    """
+    путь = tmp_path / "снимок.json"
+    monkeypatch.setattr(digest, "SNAPSHOT", путь)
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: ФИД_ДЛЯ_СВОДКИ)
+    digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, True)
+    assert not путь.exists()
+
+
+def test_настоящий_запуск_слепок_сохраняет(monkeypatch, tmp_path):
+    путь = tmp_path / "снимок.json"
+    monkeypatch.setattr(digest, "SNAPSHOT", путь)
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: ФИД_ДЛЯ_СВОДКИ)
+    результат = digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+    assert результат.lessons.startswith("10:00 Kemi")
+    assert "lesson-1-2-w35" in digest.school.load_snapshot(путь)
+
+
+def test_пропавший_урок_доезжает_до_сводки(monkeypatch, tmp_path):
+    путь = tmp_path / "снимок.json"
+    monkeypatch.setattr(digest, "SNAPSHOT", путь)
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: ФИД_ДЛЯ_СВОДКИ)
+    digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+    # Вторая выгрузка без этого урока — то есть его отменили.
+    monkeypatch.setattr(digest.school, "fetch", lambda url, **kw: "BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+    результат = digest.собрать_расписание(КонфигСоСсылкой(), digest._DEFAULTS, ДЕНЬ, ДЕНЬ, False)
+    assert результат.changes == ["отменили Kemi (24.08)"]
+
+
+def test_окружение_главнее_файла_и_для_школы(monkeypatch):
+    monkeypatch.setenv("SCHOOLSOFT_ICAL_URL", "https://из-облака/feed")
+    assert digest.адрес_школы(КонфигСоСсылкой()) == "https://из-облака/feed"

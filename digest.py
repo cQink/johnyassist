@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from johnny import events, notify, weather          # noqa: E402
+from johnny import events, notify, school, weather  # noqa: E402
 from johnny.config import load_config               # noqa: E402
 
 logger = logging.getLogger("digest")
@@ -47,6 +47,12 @@ CONFIG_DIR = ROOT / "config"
 
 MORNING = "morning"
 EVENING = "evening"
+
+# Слепок расписания: с ним сравнивается сегодняшняя выгрузка, чтобы заметить
+# отмену урока. Лежит в самом репозитории, а не в кеше запуска: облачный
+# запуск начинается с чистой машины, и любой кеш там пуст. Заодно история
+# правок расписания оказывается в git — видно, что и когда переносили.
+SNAPSHOT = ROOT / "data" / "school-snapshot.json"
 
 # Насколько запуск может опоздать против назначенного времени и всё ещё
 # считаться тем самым запуском. У GitHub Actions cron опаздывает на 5–15 минут
@@ -62,6 +68,11 @@ _DEFAULTS = {
     "morning": "07:30",
     "evening": "21:00",
     "quiet_when_nothing": True,
+    # За сколько дней начинать напоминать про контрольные и сдачи. У школьных
+    # заданий нет своего поля warn, в отличие от событий calendar.yaml, —
+    # поэтому запас общий и настраивается здесь.
+    "task_warn_days": 7,
+    "school": True,
 }
 
 
@@ -116,20 +127,69 @@ def choose_kind(now: dt.datetime, options: dict) -> str | None:
     return None
 
 
-def build(kind: str, day_events, forecast, day: dt.date, *, notable: bool) -> str:
+class Школа:
+    """Готовые к печати куски школьной части. Пустые, если фид не пришёл.
+
+    Собирается отдельно от build(), чтобы build оставалась чистой: тексты
+    сводки проверяются тестом, а не подбором подходящего учебного дня.
+    """
+
+    __slots__ = ("lessons", "menu", "tasks", "changes")
+
+    def __init__(self, lessons="", menu="", tasks=None, changes=None):
+        self.lessons, self.menu = lessons, menu
+        self.tasks, self.changes = tasks or [], changes or []
+
+    def __bool__(self):
+        return bool(self.lessons or self.menu or self.tasks or self.changes)
+
+
+def собрать_школу(школьные, day: dt.date, today: dt.date, changes, warn_days: int) -> Школа:
+    """Уроки на день, меню, ближайшие контрольные и изменения расписания.
+
+    Аргумент назван «школьные», а не events, сознательно: имя events занято
+    модулем календаря, и параметр с тем же именем перекрыл бы его внутри
+    функции — вместе с events.in_days, который здесь и нужен.
+    """
+    задания = []
+    for task in school.tasks_between(школьные, today, today + dt.timedelta(days=warn_days)):
+        осталось = (task.date() - today).days
+        хвост = f" ({events.in_days(осталось)})" if осталось else ""
+        время = f"{task.time()} " if task.time() else ""
+        задания.append(f"{время}{task.title}{хвост}".strip())
+    return Школа(
+        lessons=school.describe_lessons(school.lessons_on(школьные, day)),
+        menu=school.menu_on(школьные, day),
+        tasks=задания,
+        changes=changes.lines() if changes else [],
+    )
+
+
+def build(kind: str, day_events, forecast, day: dt.date, *, notable: bool, школа=None) -> str:
     """Собрать текст сводки. Пустая строка = отправлять нечего.
 
     Чистая: ни сети, ни файлов, ни часов. Всё, что нужно, приходит аргументами,
     поэтому формулировки проверяются тестом, а не подбором дня с дождём.
     """
+    школа = школа or Школа()
     строки = [
         f"Доброе утро. Сегодня {_дата(day)}." if kind == MORNING else f"Завтра, {_дата(day)}."
     ]
     if forecast:
         строки.append(f"Погода: {forecast}")
+    if школа.lessons:
+        строки.append(f"Уроки: {школа.lessons}")
+    # Изменения стоят сразу за уроками, а не в общем списке дел: это
+    # единственная строка, ради которой сводку стоит открыть немедленно.
+    for изменение in школа.changes:
+        строки.append(f"! Расписание: {изменение}")
+    if школа.menu:
+        строки.append(f"Обед: {школа.menu}")
     for occurrence in day_events:
         строки.append(f"— {events.describe(occurrence)}")
-    if not day_events and not notable:
+    for задание in школа.tasks:
+        строки.append(f"— {задание}")
+    if not day_events and not notable and not школа:
         return ""
     return "\n".join(строки)
 
@@ -145,6 +205,17 @@ def _дата(day: dt.date) -> str:
     return f"{_ДНИ[day.weekday()]}, {day.day} {_МЕСЯЦЫ[day.month - 1]}"
 
 
+def адрес_школы(config) -> str:
+    """Ссылка на школьный фид: сначала окружение, потом secrets.yaml.
+
+    Живёт среди секретов, а не настроек, потому что это пароль: SchoolSoft
+    предупреждает, что содержимое календаря видит любой, у кого есть ссылка.
+    """
+    из_окружения = os.environ.get("SCHOOLSOFT_ICAL_URL", "").strip()
+    из_файла = str((getattr(config, "secrets", None) or {}).get("schoolsoft_ical_url") or "").strip()
+    return из_окружения or из_файла
+
+
 def секреты(config) -> tuple[str, str]:
     """Токен и адресат: сначала переменные окружения, потом secrets.yaml.
 
@@ -156,6 +227,35 @@ def секреты(config) -> tuple[str, str]:
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     из_файла = notify.from_secrets(getattr(config, "secrets", None) or {})
     return token or из_файла[0], chat_id or из_файла[1]
+
+
+def собрать_расписание(config, options, day: dt.date, today: dt.date, dry_run: bool) -> Школа:
+    """Скачать школьный фид, сравнить с прошлым слепком, сохранить новый.
+
+    Слепок сохраняется ТОЛЬКО при настоящем запуске: при --dry-run человек
+    смотрит, что получится, и не должен этим просмотром съесть отмену урока —
+    иначе следующий, настоящий запуск сравнит уже с новым слепком и промолчит.
+    """
+    if not options.get("school", True):
+        return Школа()
+    url = адрес_школы(config)
+    if not url:
+        logger.info("Ссылки на школьный календарь нет — расписание пропускаю")
+        return Школа()
+    text = school.fetch(url)
+    if text is None:
+        return Школа()
+    школьные = school.parse_feed(text)
+    прошлый = school.load_snapshot(SNAPSHOT)
+    новый = school.snapshot(школьные, today)
+    изменения = school.diff(прошлый, новый)
+    if изменения:
+        logger.info("Расписание изменилось: %s", "; ".join(изменения.lines()))
+    if not dry_run:
+        school.save_snapshot(SNAPSHOT, новый)
+    return собрать_школу(
+        школьные, day, today, изменения, int(options.get("task_warn_days", 7))
+    )
 
 
 def main(argv=None) -> int:
@@ -196,11 +296,15 @@ def main(argv=None) -> int:
     raw = weather.fetch(
         float(options["latitude"]), float(options["longitude"]), str(options["timezone"]), days=index + 1
     )
+    школа = собрать_расписание(config, options, day, now.date(), args.dry_run)
     текст = build(
-        kind, day_events, weather.summary(raw, index), day, notable=weather.is_notable(raw, index)
+        kind, day_events, weather.summary(raw, index), day,
+        notable=weather.is_notable(raw, index), школа=школа,
     )
     if not текст and (args.force or not options["quiet_when_nothing"]):
-        текст = build(kind, day_events, weather.summary(raw, index), day, notable=True)
+        текст = build(
+            kind, day_events, weather.summary(raw, index), day, notable=True, школа=школа
+        )
     if not текст:
         logger.info("Сказать нечего — молчу (%s, %s)", kind, day)
         return 0

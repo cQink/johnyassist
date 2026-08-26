@@ -408,11 +408,16 @@ def describe(occurrence: Occurrence) -> str:
         parts.append(f"{occurrence.event.time} — ")
     parts.append(occurrence.event.text)
     if occurrence.days_left:
-        parts.append(f" ({_in_days(occurrence.days_left)})")
+        parts.append(f" ({in_days(occurrence.days_left)})")
     return "".join(parts)
 
 
-def _in_days(days: int) -> str:
+def in_days(days: int) -> str:
+    """«завтра», «послезавтра», «через 5 дней» — для обратного отсчёта.
+
+    Публичная, потому что тем же отсчётом объявляются школьные контрольные
+    (school.py), а собственного поля warn у них нет и быть не может.
+    """
     if days == 1:
         return "завтра"
     if days == 2:

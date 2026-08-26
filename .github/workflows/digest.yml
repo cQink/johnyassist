@@ -45,6 +45,14 @@ on:
         type: boolean
         default: false
 
+# Право на запись нужно ровно для одного файла — data/school-snapshot.json.
+# Отменённый урок SchoolSoft никак не помечает, он просто пропадает из
+# выгрузки, поэтому «первый урок отменили» можно сказать только сравнив
+# сегодняшнюю выгрузку со вчерашней. Хранить её больше негде: облачный запуск
+# начинается с чистой машины, и любой кеш там пуст.
+permissions:
+  contents: write
+
 jobs:
   digest:
     runs-on: ubuntu-latest
@@ -78,3 +86,24 @@ jobs:
         # При запуске по расписанию весь контекст inputs пуст, и обе подстановки
         # дают пустую строку — то есть ровно «python digest.py».
         run: python digest.py ${{ inputs.kind != 'auto' && inputs.kind || '' }} ${{ inputs.force && '--force' || '' }}
+
+      # Слепок расписания коммитим обратно — это память между запусками.
+      # Отдельным шагом с `if: always()`: сводка могла не отправиться (нет
+      # связи с телеграмом), но расписание при этом уже скачано и сравнено, и
+      # терять новый слепок из-за этого нельзя — иначе следующий запуск
+      # объявит отменой всё, что изменилось за два дня.
+      - name: Запомнить расписание
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain data/)" ]; then
+            echo "Расписание не менялось — коммитить нечего."
+            exit 0
+          fi
+          git config user.name "Johnny (Actions)"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "Слепок расписания на $(date -u +%Y-%m-%d)"
+          # rebase, а не merge: четыре запуска в сутки могут наложиться, и
+          # история из merge-коммитов над одним json никому не нужна.
+          git pull --rebase --quiet origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
