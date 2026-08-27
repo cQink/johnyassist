@@ -1,9 +1,4 @@
 {
- "lesson-63355-2-w35": {
-  "date": "2026-08-26",
-  "title": "Engelska",
-  "when": "2026-08-26T12:15:00+02:00"
- },
  "lesson-63355-2-w36": {
   "date": "2026-09-02",
   "title": "Engelska",
@@ -49,19 +44,24 @@
   "title": "Fysik",
   "when": "2026-09-10T13:40:00+02:00"
  },
+ "lesson-63428-3-w38": {
+  "date": "2026-09-17",
+  "title": "Fysik",
+  "when": "2026-09-17T13:40:00+02:00"
+ },
  "lesson-63429-0-w36": {
   "date": "2026-08-31",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-08-31T09:00:00+02:00"
  },
  "lesson-63429-0-w37": {
   "date": "2026-09-07",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-09-07T09:00:00+02:00"
  },
  "lesson-63429-0-w38": {
   "date": "2026-09-14",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-09-14T09:00:00+02:00"
  },
  "lesson-63431-3-w35": {
@@ -78,6 +78,11 @@
   "date": "2026-09-10",
   "title": "Kemi",
   "when": "2026-09-10T10:10:00+02:00"
+ },
+ "lesson-63431-3-w38": {
+  "date": "2026-09-17",
+  "title": "Kemi",
+  "when": "2026-09-17T10:10:00+02:00"
  },
  "lesson-63437-4-w35": {
   "date": "2026-08-28",
@@ -108,11 +113,6 @@
   "date": "2026-09-15",
   "title": "Naturkunskap",
   "when": "2026-09-15T13:40:00+02:00"
- },
- "lesson-63447-2-w35": {
-  "date": "2026-08-26",
-  "title": "Kemi",
-  "when": "2026-08-26T10:00:00+02:00"
  },
  "lesson-63447-2-w36": {
   "date": "2026-09-02",
@@ -189,24 +189,19 @@
   "title": "Artificiell Intelligens",
   "when": "2026-09-11T10:30:00+02:00"
  },
- "lesson-63510-2-w35": {
-  "date": "2026-08-26",
-  "title": "Svenska som andra språk",
-  "when": "2026-08-26T13:45:00+02:00"
- },
  "lesson-63510-2-w36": {
   "date": "2026-09-02",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-09-02T13:45:00+02:00"
  },
  "lesson-63510-2-w37": {
   "date": "2026-09-09",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-09-09T13:45:00+02:00"
  },
  "lesson-63510-2-w38": {
   "date": "2026-09-16",
-  "title": "Svenska som andra språk",
+  "title": "Svenska",
   "when": "2026-09-16T13:45:00+02:00"
  },
  "lesson-63573-0-w36": {
@@ -253,6 +248,11 @@
   "date": "2026-09-10",
   "title": "Artificiell Intelligens",
   "when": "2026-09-10T12:10:00+02:00"
+ },
+ "lesson-63773-3-w38": {
+  "date": "2026-09-17",
+  "title": "Artificiell Intelligens",
+  "when": "2026-09-17T12:10:00+02:00"
  },
  "lesson-63827-0-w36": {
   "date": "2026-08-31",
