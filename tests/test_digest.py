@@ -440,3 +440,19 @@ def test_перевод_можно_выключить(monkeypatch, tmp_path):
     "BEGIN:VEVENT\nUID:lunchmenu-35-1-2\nDTSTART;VALUE=DATE:20260824\n"
     "SUMMARY:Matsedel\n" + r"DESCRIPTION:Huvudrätt\nChili con carne med ris" + "\nEND:VEVENT\n"
 )
+
+
+def test_простыня_изменений_обрезается():
+    # Настоящая перетасовка расписания даёт полтора десятка строк — в такой
+    # сводке потерялось бы всё остальное.
+    много = [f"отменили Урок{i} (0{i}.09)" for i in range(1, 9)]
+    текст = digest.build("morning", [], "", ДЕНЬ, notable=True, школа=школа(changes=много))
+    assert текст.count("! Расписание:") == digest._MAX_CHANGES + 1
+    assert f"и ещё {8 - digest._MAX_CHANGES} изменений" in текст
+
+
+def test_немного_изменений_показываются_целиком():
+    текст = digest.build("morning", [], "", ДЕНЬ, notable=True,
+                         школа=школа(changes=["отменили Kemi (28.08)"]))
+    assert текст.count("! Расписание:") == 1
+    assert "и ещё" not in текст

@@ -255,16 +255,27 @@ def describe_lessons(lessons: list[SchoolEvent]) -> str:
 
 # ── Снимок и сравнение: единственный способ узнать про отмену ────────────────
 
+# Границы окна пишутся в сам слепок под этим ключом. UID урока начинается с
+# «lesson-», так что столкнуться они не могут.
+WINDOW = "_window"
+
+
 def snapshot(events: list[SchoolEvent], since: dt.date, days: int = 21) -> dict:
-    """Слепок ближайших уроков: UID → «когда и что».
+    """Слепок ближайших уроков: UID → «когда и что», плюс границы окна.
 
     Только уроки и только ближайшие недели. Причина не в экономии места, а в
     шуме: план курса на май, сдвинувшийся на день, — это не новость, ради
     которой стоит будить телефон, а весь учебный год в файле сделал бы разницу
     между выгрузками нечитаемой.
+
+    ГРАНИЦЫ ОКНА ХРАНЯТСЯ ВНУТРИ, и без них вся затея врёт. Окно скользит: за
+    сутки оно теряет день сзади и приобретает день спереди. Без записанных
+    границ сравнение объявляло бы вчерашние уроки отменёнными, а появившиеся на
+    дальнем краю — добавленными. Поймано на первом же облачном запуске
+    27.08.2026: «отменили Engelska (26.08)», хотя урок просто прошёл.
     """
     last = since + dt.timedelta(days=days)
-    слепок = {}
+    слепок = {WINDOW: {"from": since.isoformat(), "to": last.isoformat()}}
     for event in events:
         day = event.date()
         if event.kind != LESSON or day is None or not (since <= day <= last):
@@ -272,6 +283,29 @@ def snapshot(events: list[SchoolEvent], since: dt.date, days: int = 21) -> dict:
         когда = event.start.isoformat() if isinstance(event.start, dt.datetime) else day.isoformat()
         слепок[event.uid] = {"when": когда, "title": event.title, "date": day.isoformat()}
     return слепок
+
+
+def _границы(слепок: dict) -> tuple[dt.date, dt.date] | None:
+    """Окно слепка. Нет записанных границ — выводим из самих дат.
+
+    Запасной путь нужен для слепков, снятых до появления ключа _window: без
+    него первое же сравнение со старым файлом выдало бы ложные отмены.
+    """
+    окно = слепок.get(WINDOW)
+    if isinstance(окно, dict):
+        try:
+            return dt.date.fromisoformat(окно["from"]), dt.date.fromisoformat(окно["to"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    даты = []
+    for uid, запись in слепок.items():
+        if uid == WINDOW or not isinstance(запись, dict):
+            continue
+        try:
+            даты.append(dt.date.fromisoformat(запись["date"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return (min(даты), max(даты)) if даты else None
 
 
 class Changes:
@@ -312,17 +346,42 @@ def diff(old: dict, new: dict) -> Changes:
     Пустой слепок трактуется как «первый запуск», а НЕ как «всё отменили» —
     иначе в первое же утро человек получил бы сообщение об отмене всех уроков
     на три недели вперёд.
+
+    СРАВНИВАЕТСЯ ТОЛЬКО ПЕРЕСЕЧЕНИЕ ОКОН, и это не тонкость, а условие
+    правдивости. Окно скользит на день в сутки: без пересечения вчерашние
+    уроки выглядели бы отменёнными, а вошедшие на дальнем краю — добавленными,
+    и человек получал бы по три-пять выдуманных «отменили» каждое утро. Ровно
+    это и случилось на первом облачном запуске 27.08.2026.
     """
     if not old:
         return Changes()
+    старое, новое = _границы(old), _границы(new)
+    if старое is None or новое is None:
+        return Changes()
+    начало, конец = max(старое[0], новое[0]), min(старое[1], новое[1])
+    if начало > конец:
+        # Окна не пересекаются вовсе (слепок сильно устарел) — сравнивать
+        # нечего, и объявлять всё отменённым тем более нельзя.
+        return Changes()
+
+    def в_окне(запись) -> bool:
+        try:
+            return начало <= dt.date.fromisoformat(запись["date"]) <= конец
+        except (KeyError, TypeError, ValueError):
+            return False
+
     cancelled, added, moved = [], [], []
     for uid, было in old.items():
+        if uid == WINDOW or not isinstance(было, dict) or not в_окне(было):
+            continue
         стало = new.get(uid)
         if стало is None:
             cancelled.append((было["date"], было["title"]))
         elif стало["when"] != было["when"]:
             moved.append((стало["date"], стало["title"], _время(стало["when"])))
     for uid, стало in new.items():
+        if uid == WINDOW or not isinstance(стало, dict) or not в_окне(стало):
+            continue
         if uid not in old:
             added.append((стало["date"], стало["title"], _время(стало["when"])))
     return Changes(sorted(cancelled), sorted(added), sorted(moved))
