@@ -29,6 +29,7 @@
 
 import argparse
 import datetime as dt
+import json
 import logging
 import os
 import sys
@@ -54,12 +55,33 @@ EVENING = "evening"
 # правок расписания оказывается в git — видно, что и когда переносили.
 SNAPSHOT = ROOT / "data" / "school-snapshot.json"
 
-# Насколько запуск может опоздать против назначенного времени и всё ещё
-# считаться тем самым запуском. У GitHub Actions cron опаздывает на 5–15 минут
-# штатно, поэтому окно щедрое; но оно меньше часа — иначе оба cron-запуска
-# (зимний и летний, см. докстринг) сработали бы в один день.
-_LATE_MINUTES = 55
-_EARLY_MINUTES = 5
+# Отметка «эту сводку за такое-то число уже отправляли». Лежит рядом со
+# слепком расписания и по той же причине: другой памяти между запусками в
+# облаке нет.
+STATE = ROOT / "data" / "last-sent.json"
+
+# ДОГОНЯЮЩЕЕ ОКНО, и это ядро всей затеи с надёжностью.
+#
+# 27.08.2026 утренняя сводка не пришла вовсе: GitHub не создал НИ ОДНОГО
+# запуска ни в 05:30, ни в 06:30 UTC. Workflow при этом активен, репозиторий
+# свежий, прошлые запуски зелёные — событие просто потерялось. Расписание в
+# Actions негарантированное: GitHub обещает «возможные задержки при высокой
+# нагрузке», а на деле после аварии часть событий не создаётся совсем.
+#
+# Поэтому будильник теперь не один. Cron стоит КАЖДЫЙ ЧАС внутри окна, а
+# отметка в STATE не даёт отправить сводку дважды за день. Пропуск одного
+# запуска стоит часа задержки вместо целого пропущенного дня.
+#
+# Размер окна — компромисс: слишком узкое вернёт прежнюю хрупкость, слишком
+# широкое пришлёт «Доброе утро» вечером. Утреннее тянется до полудня, вечернее
+# упирается в полночь — за неё оно не заходит намеренно, иначе «уже отправляли
+# сегодня» сравнивалось бы с другой датой, чем та, о которой сводка.
+_WINDOW_HOURS = {MORNING: 4.5, EVENING: 3.0}
+
+# На сколько окно открывается РАНЬШЕ назначенного времени. Пять минут — на
+# случай, если часы раннера чуть спешат относительно назначенного; больше не
+# нужно, окно и так длинное с другого конца.
+_EARLY_HOURS = 5 / 60
 
 _DEFAULTS = {
     "latitude": 59.3293,          # Стокгольм
@@ -109,11 +131,16 @@ def local_now(timezone: str) -> dt.datetime | None:
         return None
 
 
-def should_run(now: dt.datetime, target: str) -> bool:
-    """Пора ли отправлять сводку, назначенную на `target` («07:30»).
+def should_run(now: dt.datetime, target: str, window_hours: float = 4.5) -> bool:
+    """Наступило ли окно сводки, назначенной на `target` («07:30»).
 
     Чистая функция: в неё передают время, а не читают часы внутри — иначе
     проверить поведение зимнего запуска можно было бы только зимой.
+
+    Окно открывается за пять минут до назначенного времени (часы машины могут
+    чуть спешить) и держится window_hours. Держится долго намеренно: см.
+    _WINDOW_HOURS — от повторной отправки защищает не узость окна, а отметка
+    в STATE.
     """
     try:
         час, минута = (int(part) for part in target.split(":"))
@@ -121,15 +148,53 @@ def should_run(now: dt.datetime, target: str) -> bool:
     except (ValueError, TypeError):
         logger.warning("Непонятное время сводки %r — отправляю без проверки", target)
         return True
-    опоздание = (now - назначено).total_seconds() / 60
-    return -_EARLY_MINUTES <= опоздание <= _LATE_MINUTES
+    прошло = (now - назначено).total_seconds() / 3600
+    return -_EARLY_HOURS <= прошло <= window_hours
 
 
-def choose_kind(now: dt.datetime, options: dict) -> str | None:
-    """Какая сводка сейчас уместна: утренняя, вечерняя или никакая."""
+def load_state(path) -> dict:
+    """Что и когда уже отправляли. Нет файла или он битый — пустой словарь.
+
+    Пустой словарь значит «сегодня ещё ничего не отправляли», то есть в худшем
+    случае придёт лишняя сводка. Это несравнимо лучше обратной ошибки, когда
+    из-за нечитаемого файла сводка не приходит вовсе и никто не знает почему.
+    """
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Отметка об отправке не прочиталась (%s) — считаю, что не отправляли", exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_state(path, state: dict) -> None:
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+
+
+def choose_kind(now: dt.datetime, options: dict, state: dict | None = None) -> str | None:
+    """Какая сводка сейчас уместна: утренняя, вечерняя или никакая.
+
+    Учитывает отметку об уже отправленном: cron стоит каждый час внутри окна,
+    и без этой проверки человек получал бы одну и ту же сводку пять раз подряд.
+    """
+    state = state or {}
+    сегодня = now.date().isoformat()
     for kind in (MORNING, EVENING):
-        if should_run(now, str(options[kind])):
-            return kind
+        if not should_run(now, str(options[kind]), _WINDOW_HOURS[kind]):
+            continue
+        if state.get(kind) == сегодня:
+            logger.info("Сводка %s за %s уже отправлена — пропускаю запуск", kind, сегодня)
+            continue
+        return kind
     return None
 
 
@@ -310,9 +375,11 @@ def main(argv=None) -> int:
         # считаем по времени машины и продолжаем.
         now = dt.datetime.now()
 
-    kind = args.kind or choose_kind(now, options)
+    состояние = load_state(STATE)
+    # Явно названная сводка (руками, кнопкой Run workflow) отметку игнорирует:
+    # человек попросил именно её и именно сейчас, спорить с ним незачем.
+    kind = args.kind or choose_kind(now, options, состояние)
     if kind is None:
-        # Сюда попадает лишний из двух cron-запусков (зимний против летнего).
         logger.info("Сейчас %s — ни утро (%s), ни вечер (%s), нечего делать",
                     now.strftime("%H:%M"), options[MORNING], options[EVENING])
         return 0
@@ -333,6 +400,9 @@ def main(argv=None) -> int:
             kind, day_events, weather.summary(raw, index), day, notable=True, школа=школа
         )
     if not текст:
+        # Отметку НЕ ставим: сказать было нечего — значит сводка за сегодня не
+        # отправлена, и если через час появится повод (изменилось расписание,
+        # завели напоминание), следующий запуск обязан её прислать.
         logger.info("Сказать нечего — молчу (%s, %s)", kind, day)
         return 0
 
@@ -349,6 +419,10 @@ def main(argv=None) -> int:
         # не приходит неделями и никто об этом не знает.
         logger.error("Сводка не отправлена: %s", exc)
         return 1
+    # Отметка ставится ТОЛЬКО после успешной отправки — иначе неудачный запуск
+    # закрыл бы окно, и следующий, уже успешный, промолчал бы.
+    состояние[kind] = now.date().isoformat()
+    save_state(STATE, состояние)
     logger.info("Сводка отправлена (%s, %s, событий %d)", kind, day, len(day_events))
     return 0
 
