@@ -1,7 +1,7 @@
 {
  "_window": {
-  "from": "2026-09-10",
-  "to": "2026-10-01"
+  "from": "2026-09-11",
+  "to": "2026-10-02"
  },
  "lesson-63355-2-w38": {
   "date": "2026-09-16",
@@ -33,11 +33,6 @@
   "title": "Matematik fortsättning",
   "when": "2026-09-28T10:30:00+02:00"
  },
- "lesson-63428-3-w37": {
-  "date": "2026-09-10",
-  "title": "Fysik",
-  "when": "2026-09-10T13:40:00+02:00"
- },
  "lesson-63428-3-w38": {
   "date": "2026-09-17",
   "title": "Fysik",
@@ -68,11 +63,6 @@
   "title": "Svenska",
   "when": "2026-09-28T09:00:00+02:00"
  },
- "lesson-63431-3-w37": {
-  "date": "2026-09-10",
-  "title": "Kemi",
-  "when": "2026-09-10T10:10:00+02:00"
- },
  "lesson-63431-3-w38": {
   "date": "2026-09-17",
   "title": "Kemi",
@@ -102,6 +92,11 @@
   "date": "2026-09-25",
   "title": "Matematik fortsättning",
   "when": "2026-09-25T09:00:00+02:00"
+ },
+ "lesson-63437-4-w40": {
+  "date": "2026-10-02",
+  "title": "Matematik fortsättning",
+  "when": "2026-10-02T09:00:00+02:00"
  },
  "lesson-63441-1-w38": {
   "date": "2026-09-15",
@@ -178,6 +173,11 @@
   "title": "Artificiell Intelligens",
   "when": "2026-09-25T10:30:00+02:00"
  },
+ "lesson-63485-4-w40": {
+  "date": "2026-10-02",
+  "title": "Artificiell Intelligens",
+  "when": "2026-10-02T10:30:00+02:00"
+ },
  "lesson-63510-2-w38": {
   "date": "2026-09-16",
   "title": "Svenska",
@@ -223,10 +223,10 @@
   "title": "Teknik",
   "when": "2026-09-25T12:25:00+02:00"
  },
- "lesson-63773-3-w37": {
-  "date": "2026-09-10",
-  "title": "Artificiell Intelligens",
-  "when": "2026-09-10T12:10:00+02:00"
+ "lesson-63710-4-w40": {
+  "date": "2026-10-02",
+  "title": "Teknik",
+  "when": "2026-10-02T12:25:00+02:00"
  },
  "lesson-63773-3-w38": {
   "date": "2026-09-17",
