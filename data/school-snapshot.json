@@ -1,7 +1,7 @@
 {
  "_window": {
-  "from": "2026-09-18",
-  "to": "2026-10-09"
+  "from": "2026-09-19",
+  "to": "2026-10-10"
  },
  "lesson-63355-2-w39": {
   "date": "2026-09-23",
@@ -78,11 +78,6 @@
   "title": "Kemi",
   "when": "2026-10-08T10:10:00+02:00"
  },
- "lesson-63437-4-w38": {
-  "date": "2026-09-18",
-  "title": "Matematik fortsättning",
-  "when": "2026-09-18T09:00:00+02:00"
- },
  "lesson-63437-4-w39": {
   "date": "2026-09-25",
   "title": "Matematik fortsättning",
@@ -158,11 +153,6 @@
   "title": "Engelska",
   "when": "2026-10-06T10:00:00+02:00"
  },
- "lesson-63485-4-w38": {
-  "date": "2026-09-18",
-  "title": "Artificiell Intelligens",
-  "when": "2026-09-18T10:30:00+02:00"
- },
  "lesson-63485-4-w39": {
   "date": "2026-09-25",
   "title": "Artificiell Intelligens",
@@ -207,11 +197,6 @@
   "date": "2026-10-05",
   "title": "Historia",
   "when": "2026-10-05T14:30:00+02:00"
- },
- "lesson-63710-4-w38": {
-  "date": "2026-09-18",
-  "title": "Teknik",
-  "when": "2026-09-18T12:25:00+02:00"
  },
  "lesson-63710-4-w39": {
   "date": "2026-09-25",
