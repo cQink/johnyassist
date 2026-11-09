@@ -103,21 +103,6 @@
   "title": "Matematik fortsättning",
   "when": "2026-11-27T09:00:00+01:00"
  },
- "lesson-63441-1-w46": {
-  "date": "2026-11-10",
-  "title": "Naturkunskap",
-  "when": "2026-11-10T13:40:00+01:00"
- },
- "lesson-63441-1-w47": {
-  "date": "2026-11-17",
-  "title": "Naturkunskap",
-  "when": "2026-11-17T13:40:00+01:00"
- },
- "lesson-63441-1-w48": {
-  "date": "2026-11-24",
-  "title": "Naturkunskap",
-  "when": "2026-11-24T13:40:00+01:00"
- },
  "lesson-63447-2-w46": {
   "date": "2026-11-11",
   "title": "Kemi",
@@ -362,5 +347,20 @@
   "date": "2026-11-30",
   "title": "Teknik",
   "when": "2026-11-30T13:00:00+01:00"
+ },
+ "lesson-67153-1-w46": {
+  "date": "2026-11-10",
+  "title": "Naturkunskap",
+  "when": "2026-11-10T13:40:00+01:00"
+ },
+ "lesson-67153-1-w47": {
+  "date": "2026-11-17",
+  "title": "Naturkunskap",
+  "when": "2026-11-17T13:40:00+01:00"
+ },
+ "lesson-67153-1-w48": {
+  "date": "2026-11-24",
+  "title": "Naturkunskap",
+  "when": "2026-11-24T13:40:00+01:00"
  }
 }
